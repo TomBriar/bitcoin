@@ -356,6 +356,40 @@ static RPCHelpMan decoderawtransaction()
     };
 }
 
+static RPCHelpMan compressrawtransaction()
+{
+    return RPCHelpMan{"compressrawtransaction",
+                "Return a string of the compressed, serialized, hex-encoded transaction.",
+                {
+                    {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"}
+                },
+                RPCResult{
+                    RPCResult::Type::STR_HEX, "hex", "Hex string of the compressed transaction",
+                    DecodeTxDoc(/*txid_field_doc=*/"The transaction id"),
+                },
+                RPCExamples{
+                    HelpExampleCli("compressrawtransaction", "\"hexstring\"") + 
+                    HelpExampleRpc("compressrawtransaction", "\"hexstring\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    RPCTypeCheck(request.params, {UniValue::VSTR});
+
+
+    CMutableTransaction mtx;
+    
+    if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
+        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+    }
+
+    UniValue result(UniValue::VSTR);
+    TxToUniv(CTransaction(std::move(mtx)), /*block_hash=*/uint256(), /*entry=*/result, /*include_hex=*/false);
+
+    return result;
+},
+    };
+}
+
 static RPCHelpMan decodescript()
 {
     return RPCHelpMan{
@@ -1855,6 +1889,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &getrawtransaction},
         {"rawtransactions", &createrawtransaction},
         {"rawtransactions", &decoderawtransaction},
+        {"rawtransactions", &compressrawtransaction},
         {"rawtransactions", &decodescript},
         {"rawtransactions", &combinerawtransaction},
         {"rawtransactions", &signrawtransactionwithkey},
