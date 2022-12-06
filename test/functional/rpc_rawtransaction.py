@@ -86,7 +86,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.sendrawtransaction_tests()
         self.sendrawtransaction_testmempoolaccept_tests()
         self.decoderawtransaction_tests()
-        # self.compressrawtransaction_tests()
+        self.compressrawtransaction_tests()
         self.transaction_version_number_tests()
         if self.is_specified_wallet_compiled() and not self.options.descriptors:
             self.import_deterministic_coinbase_privkeys()
@@ -333,10 +333,14 @@ class RawTransactionsTest(BitcoinTestFramework):
     def compressrawtransaction_tests(self):
         self.log.info("Test compressrawtransaction")
         # input P2PKH output P2PKH x2 transaction
+        targettx = "46b307e16b262c8f3fef7f2c05a50663adb654cb6d79c3c35dcecf18edf430a547f2016a473044022053b6408b029763290493653cdfd7775249735a349c5f2d23042972324e3399c0022009fcd2a8598b390afdabfbf8782e6f9cdfc86a9e9ce4ca77369ef28b85970967012102195646c22ab419c14599106960cc8587266cc0ad2189861c44c5eb3dfa771d3c0081f9d9718b642cedc29a94a581a8800509ba0815dc1eb297b1b2fc087452552d6ca38bbfc20f3d95dd3dbb4849a33f7d"
         tx = "0100000001f247a530f4ed18cfce5dc3c3796dcb54b6ad6306a5052c7fef3f8f2c266be107010000006a473044022053b6408b029763290493653cdfd7775249735a349c5f2d23042972324e3399c0022009fcd2a8598b390afdabfbf8782e6f9cdfc86a9e9ce4ca77369ef28b85970967012102195646c22ab419c14599106960cc8587266cc0ad2189861c44c5eb3dfa771d3cffffffff02f16c3e00000000001976a9148b642cedc29a94a581a8800509ba0815dc1eb29788ac08be2c06000000001976a9147452552d6ca38bbfc20f3d95dd3dbb4849a33f7d88ac00000000"
+        print(targettx)
         compressed_transaction = self.nodes[0].compressrawtransaction(tx)
-        assert_equal(compressed_transaction, Decimal('1.00000000'))
-        assert_raises_rpc_error(-22, 'TX decode failed', self.nodes[0].compressrawtransaction, encrawtx, False)  # fails to decode as non-witness transaction
+        print(compressed_transaction)
+        print(targettx)
+        assert_equal(compressed_transaction, targettx)
+        assert_raises_rpc_error(-22, 'TX compress failed', self.nodes[0].compressrawtransaction, encrawtx, False)  # fails to decode as non-witness transaction
 
     def transaction_version_number_tests(self):
         self.log.info("Test transaction version numbers")

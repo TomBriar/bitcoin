@@ -33,10 +33,26 @@
 #include <validation.h>
 
 #include <script/sign.h>
-#include <node/transaction.h>
+// #include <node/transaction.h>
+// #include <node/transaction.cpp>
 #include <node/blockstorage.h>
 
 #include <secp256k1.h>
+
+
+// #include <chain.h>
+// #include <chainparams.h>
+// #include <coins.h>
+// #include <index/txindex.h>
+// #include <merkleblock.h>
+// #include <node/blockstorage.h>
+// #include <primitives/transaction.h>
+// #include <rpc/server.h>
+// #include <rpc/server_util.h>
+// #include <rpc/util.h>
+// #include <univalue.h>
+// #include <util/strencodings.h>
+// #include <validation.h>
 
 
 
@@ -1499,13 +1515,13 @@ void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainst
             // tr = GetTransaction(nullptr, nullptr, mtx.vin.at(index).prevout.hash, consensusParams, block_hash);
             // prev_mtx = CMutableTransaction(*tr);
             // cbi = *block_manager.LookupBlockIndex(mtx.vin.at(index).prevout.hash);
-            const CBlockIndex pindex = *active_chainstate.m_blockman.LookupBlockIndex(mtx.vin.at(index).prevout.hash);
-            length2 = pindex.nHeight;
-            if (length2 < 100) {
-                result += "hi\n";
-            } else {
-                result += "hi hello\n";
-            }
+            // const CBlockIndex pindex = *active_chainstate.m_blockman.LookupBlockIndex(mtx.vin.at(index).prevout.hash);
+            // length2 = pindex.nHeight;
+            // if (length2 < 100) {
+            //     result += "hi\n";
+            // } else {
+            //     result += "hi hello\n";
+            // }
 
             // ChainstateManager* maybe_chainman = GetChainman(context, req);
             // if (!maybe_chainman) {
@@ -1624,4 +1640,6 @@ void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainst
 
     result += "compressed_transaction = "+compressed_transaction+"\n";
     DecompressRawTransaction(compressed_transaction, result);
+    /* result contains DEBUG info up to this point */
+    result = compressed_transaction;
 }
