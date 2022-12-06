@@ -320,7 +320,7 @@ static RPCHelpMan decoderawtransaction()
                 {
                     {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"},
                     {"iswitness", RPCArg::Type::BOOL, RPCArg::DefaultHint{"depends on heuristic tests"}, "Whether the transaction hex is a serialized witness transaction.\n"
-                        "If iswitness is not present, heuristic tests will be used in decoding.\n"
+                        "If witness is not present, heuristic tests will be used in decoding.\n"
                         "If true, only witness deserialization will be tried.\n"
                         "If false, only non-witness deserialization will be tried.\n"
                         "This boolean should reflect whether the transaction has inputs\n"
@@ -359,13 +359,12 @@ static RPCHelpMan decoderawtransaction()
 static RPCHelpMan compressrawtransaction()
 {
     return RPCHelpMan{"compressrawtransaction",
-                "Return a string of the compressed, serialized, hex-encoded transaction.",
+                "Return a String representing the compressed, serialized, hex-encoded transaction.",
                 {
                     {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"}
                 },
                 RPCResult{
-                    RPCResult::Type::STR_HEX, "hex", "Hex string of the compressed transaction",
-                    DecodeTxDoc(/*txid_field_doc=*/"The transaction id"),
+                    RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"
                 },
                 RPCExamples{
                     HelpExampleCli("compressrawtransaction", "\"hexstring\"") + 
@@ -373,18 +372,24 @@ static RPCHelpMan compressrawtransaction()
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    RPCTypeCheck(request.params, {UniValue::VSTR});
+    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 
+    NodeContext& node = EnsureAnyNodeContext(request.context);
+    ChainstateManager& chainman = EnsureChainman(node);
+    Chainstate& active_chainstate = chainman.ActiveChainstate();
 
     CMutableTransaction mtx;
-    
+
     if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
     }
 
-    UniValue result(UniValue::VSTR);
-    TxToUniv(CTransaction(std::move(mtx)), /*block_hash=*/uint256(), /*entry=*/result, /*include_hex=*/false);
+    std::string result;
+    CompressRawTransaction(mtx, active_chainstate, result);
+    // CMutableTransaction decompressed_mtx = DecompressRawTransaction(compressed_transaction, active_chainstate, mtx, result);
 
+    // UniValue result(UniValue::VSTR);
+    // return EncodeHexTx(CTransaction(mtx));
     return result;
 },
     };

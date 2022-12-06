@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 #include <optional>
+#include <node/blockstorage.h>
 
 struct bilingual_str;
 class FillableSigningProvider;
@@ -40,5 +41,13 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
 
 /** Create a transaction from univalue parameters */
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf);
+
+/**
+ * Sign a transaction with the given keystore and previous transactions
+ *
+ * @param  mtx           The transaction to-be-signed
+ * @param  result        The compressed, serilized, hex encoded transaction
+ */
+void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainstate, std::string& result);
 
 #endif // BITCOIN_RPC_RAWTRANSACTION_UTIL_H
