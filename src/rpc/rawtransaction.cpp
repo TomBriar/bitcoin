@@ -363,43 +363,73 @@ static RPCHelpMan decoderawtransaction()
 static RPCHelpMan compressrawtransaction()
 {
     return RPCHelpMan{"compressrawtransaction",
-                "Return a String representing the compressed, serialized, hex-encoded transaction.",
-                {
-                    {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"}
-                },
-                RPCResult{
-                    RPCResult::Type::STR_HEX, "transaction", "hex string of the transaction"
-                },
-                RPCExamples{
-                    HelpExampleCli("compressrawtransaction", "\"hexstring\"") + 
-                    HelpExampleRpc("compressrawtransaction", "\"hexstring\"")
-                },
+        "Return a String representing the compressed, serialized, hex-encoded transaction.",
+        {
+            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"}
+        },
+        RPCResult{
+            RPCResult::Type::STR_HEX, "compressed-transaction", "The compressed, serialized, hex-encoded transaction string"
+        },
+        RPCExamples{
+            HelpExampleCli("compressrawtransaction", "\"hexstring\"") + 
+            HelpExampleRpc("compressrawtransaction", "\"hexstring\"")
+        },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
+
+            CMutableTransaction mtx;
+            std::string result, transaction_result;
+
+            if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
+                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+            }
+
+            NodeContext& node = EnsureAnyNodeContext(request.context);
+            ChainstateManager& chainman = EnsureChainman(node);
+            Chainstate& active_chainstate = chainman.ActiveChainstate();
+            active_chainstate.ForceFlushStateToDisk();
+
+            CompressRawTransaction(mtx, active_chainstate, transaction_result, result);
+            // CMutableTransaction decompressed_mtx = DecompressRawTransaction(compressed_transaction, active_chainstate, mtx, result);
+
+            // UniValue result(UniValue::VSTR);
+            // return EncodeHexTx(CTransaction(mtx));
+            return transaction_result;
+        }
+    };
+}
+
+static RPCHelpMan decompressrawtransaction()
 {
-    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
+    return RPCHelpMan{"decompressrawtransaction",
+        "Return a String representing the decompressed, serialized, hex-encoded transaction.",
+        {
+            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"}
+        },
+        RPCResult{
+            RPCResult::Type::STR_HEX, "decompressed-transaction", "The decompressed, serialized, hex-encoded transaction string"
+        },
+        RPCExamples{
+            HelpExampleCli("decompressrawtransaction", "\"hexstring\"") + 
+            HelpExampleRpc("decompressrawtransaction", "\"hexstring\"")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+        {
+            RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 
-    
+            CMutableTransaction mtx;
+            std::string result;
 
-    CMutableTransaction mtx;
-    std::string result, transaction_result;
+            NodeContext& node = EnsureAnyNodeContext(request.context);
+            ChainstateManager& chainman = EnsureChainman(node);
+            Chainstate& active_chainstate = chainman.ActiveChainstate();
+            active_chainstate.ForceFlushStateToDisk();
 
-    if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
-    }
+            DecompressRawTransaction(request.params[0].get_str(), active_chainstate, mtx, result);
 
-
-    NodeContext& node = EnsureAnyNodeContext(request.context);
-    ChainstateManager& chainman = EnsureChainman(node);
-    Chainstate& active_chainstate = chainman.ActiveChainstate();
-    active_chainstate.ForceFlushStateToDisk();
-
-    CompressRawTransaction(mtx, active_chainstate, transaction_result, result);
-    // CMutableTransaction decompressed_mtx = DecompressRawTransaction(compressed_transaction, active_chainstate, mtx, result);
-
-    // UniValue result(UniValue::VSTR);
-    // return EncodeHexTx(CTransaction(mtx));
-    return result;
-},
+            return EncodeHexTx(CTransaction(mtx));
+        }
     };
 }
 
@@ -1903,6 +1933,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &createrawtransaction},
         {"rawtransactions", &decoderawtransaction},
         {"rawtransactions", &compressrawtransaction},
+        {"rawtransactions", &decompressrawtransaction},
         {"rawtransactions", &decodescript},
         {"rawtransactions", &combinerawtransaction},
         {"rawtransactions", &signrawtransactionwithkey},

@@ -785,7 +785,7 @@ static std::tuple<std::string, std::vector<unsigned char>> get_output_type(CTxOu
 }
 
 
-void DecompressRawTransaction(std::string& compressed_transaction, Chainstate& active_chainstate, CMutableTransaction& transaction_result, std::string& result)
+void DecompressRawTransaction(const std::string compressed_transaction, Chainstate& active_chainstate, CMutableTransaction& transaction_result, std::string& result)
 {
     result += "---------------------------------------------------\n";
     /* Result */
@@ -809,7 +809,7 @@ void DecompressRawTransaction(std::string& compressed_transaction, Chainstate& a
     std::string output_type_bits;
 
     /* Transaction Types */
-    int partial_locktime, input_count, output_count, vout_int, block_index, block_height;
+    int input_count, output_count, vout_int, block_index, block_height;
     std::tuple<std::string, std::vector<unsigned char>> output_result;
     std::vector<std::string> compressed_signatures, input_types;
     std::vector<int> half_finished_inputs, hash_types;
@@ -1624,7 +1624,7 @@ void DecompressRawTransaction(std::string& compressed_transaction, Chainstate& a
             }
         }
     }
-    return mtx;
+    transaction_result = mtx;
 }
 
 void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainstate, std::string& transaction_result, std::string& result)
@@ -2369,5 +2369,5 @@ void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainst
     // result += "---------------------R------------------------\n";
     /* result contains DEBUG info up to this point */
     // result = compressed_transaction;
-    transaction_result = compressed_transaction
+    transaction_result = compressed_transaction;
 }

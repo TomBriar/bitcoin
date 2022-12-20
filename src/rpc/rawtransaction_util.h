@@ -56,6 +56,6 @@ void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainst
  * @param  mtx           The compressed, serilized, hex encoded transaction
  * @param  result        The decompressed transaction
  */
-void DecompressRawTransaction(std::string& hex, Chainstate& active_chainstate, CMutableTransaction& transaction_result, std::string& result);
+void DecompressRawTransaction(const std::string hex, Chainstate& active_chainstate, CMutableTransaction& transaction_result, std::string& result);
 
 #endif // BITCOIN_RPC_RAWTRANSACTION_UTIL_H
