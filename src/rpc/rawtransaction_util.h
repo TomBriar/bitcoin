@@ -43,11 +43,19 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf);
 
 /**
- * Sign a transaction with the given keystore and previous transactions
+ * Compress a Transaction to a hex encoded string
  *
- * @param  mtx           The transaction to-be-signed
+ * @param  mtx           The transaction to be compressed
  * @param  result        The compressed, serilized, hex encoded transaction
  */
-void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainstate, std::string& result);
+void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainstate, std::string& transaction_result, std::string& result);
+
+/**
+ * Decompress a compressed transaction encoded as a hex string
+ *
+ * @param  mtx           The compressed, serilized, hex encoded transaction
+ * @param  result        The decompressed transaction
+ */
+void DecompressRawTransaction(std::string& hex, Chainstate& active_chainstate, CMutableTransaction& transaction_result, std::string& result);
 
 #endif // BITCOIN_RPC_RAWTRANSACTION_UTIL_H

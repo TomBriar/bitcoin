@@ -45,11 +45,15 @@
 
 #include <univalue.h>
 
+// #include <kernal/coinstats.h>
+#include <node/blockstorage.h>
+
 using node::AnalyzePSBT;
 using node::FindCoins;
 using node::GetTransaction;
 using node::NodeContext;
 using node::PSBTAnalysis;
+using node::BlockManager;
 
 static void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry, Chainstate& active_chainstate)
 {
@@ -374,18 +378,22 @@ static RPCHelpMan compressrawtransaction()
 {
     RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 
-    NodeContext& node = EnsureAnyNodeContext(request.context);
-    ChainstateManager& chainman = EnsureChainman(node);
-    Chainstate& active_chainstate = chainman.ActiveChainstate();
+    
 
     CMutableTransaction mtx;
+    std::string result, transaction_result;
 
     if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
         throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
     }
 
-    std::string result;
-    CompressRawTransaction(mtx, active_chainstate, result);
+
+    NodeContext& node = EnsureAnyNodeContext(request.context);
+    ChainstateManager& chainman = EnsureChainman(node);
+    Chainstate& active_chainstate = chainman.ActiveChainstate();
+    active_chainstate.ForceFlushStateToDisk();
+
+    CompressRawTransaction(mtx, active_chainstate, transaction_result, result);
     // CMutableTransaction decompressed_mtx = DecompressRawTransaction(compressed_transaction, active_chainstate, mtx, result);
 
     // UniValue result(UniValue::VSTR);
