@@ -39,6 +39,7 @@
 #include <util/vector.h>
 #include <validation.h>
 #include <validationinterface.h>
+#include <util/strencodings.h>
 
 #include <numeric>
 #include <stdint.h>
@@ -47,6 +48,7 @@
 
 // #include <kernal/coinstats.h>
 #include <node/blockstorage.h>
+#include <vector>
 
 using node::AnalyzePSBT;
 using node::FindCoins;
@@ -94,6 +96,8 @@ static std::vector<RPCResult> DecodeTxDoc(const std::string& txid_field_doc)
         {RPCResult::Type::ARR, "vin", "",
         {
             {RPCResult::Type::OBJ, "", "",
+            {
+                {RPCResult::Type::STR_HEX, "coinbase", /*optional=*/true, "The coinbase value (only if coinbase transaction)"},
             {
                 {RPCResult::Type::STR_HEX, "coinbase", /*optional=*/true, "The coinbase value (only if coinbase transaction)"},
                 {RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id (if not coinbase transaction)"},
@@ -378,7 +382,7 @@ static RPCHelpMan compressrawtransaction()
         {
             RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 
-            CMutableTransaction mtx;
+            CMutableTransaction mtx, rmtx;
             std::string result, transaction_result;
 
             if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
@@ -389,13 +393,732 @@ static RPCHelpMan compressrawtransaction()
             ChainstateManager& chainman = EnsureChainman(node);
             Chainstate& active_chainstate = chainman.ActiveChainstate();
             active_chainstate.ForceFlushStateToDisk();
+			blockman = &active_chainstate.m_blockman;
 
-            CompressRawTransaction(mtx, active_chainstate, transaction_result, result);
-            // CMutableTransaction decompressed_mtx = DecompressRawTransaction(compressed_transaction, active_chainstate, mtx, result);
+			/* Encode Version
+				Encode the version as binary if its less then 4, Otherwise we'll encode the version as a VarInt later. 
+			*/
+			std::string version_bits;
+			switch(mtx.nVersion)
+			{
+				case 1: 
+				{
+					version_bits = "01";
+					break;
+				};
+				case 2: 
+				{
+					version_bits = "10";
+					break;
+				};
+				case 3: 
+				{
+					version_bits = "11";
+					break;
+				};
+				default: 
+				{
+					version_bits = "00";
+					break;
+				};
+			}
 
-            // UniValue result(UniValue::VSTR);
-            // return EncodeHexTx(CTransaction(mtx));
-            return transaction_result;
+			/* Encode coinbase bool
+				4294967295 is the vout associated with a coinbase transaction, Therefore minimal compression is avaible. 
+			*/
+			bool coinbase;
+			switch(mtx.vin[0].prevout.n) 
+			{
+				case 4294967295: 
+				{
+					coinbase = true;
+					break;
+				}
+				default: 
+				{
+					coinbase = false;
+					break;
+				}
+			}
+			result += "coinbase = "+std::to_string(coinbase)+"\n";
+
+			/* Encode Input Count
+				Encode the Input Count as binary if its less then 4, Otherwise we'll encode the Input Count as a VarInt later. 
+			*/
+			std::string input_count_bits;
+			switch(mtx.vin.size())
+			{
+				case 1:
+				{
+					input_count_bits = "01";
+					break;
+				}
+				case 2:
+				{
+					input_count_bits = "10";
+					break;
+				}
+				case 3:
+				{
+					input_count_bits = "11";
+					break;
+				}
+				default:
+				{
+					input_count_bits = "00";
+					break;
+				}
+			}
+
+			/* Encode Output Count
+				Encode the Output Count as binary if its less then 4, Otherwise we'll encode the Output Count as a VarInt later. 
+			*/
+			std::string output_count_bits;
+			switch(mtx.vout.size())
+			{
+				case 1:
+				{
+					output_count_bits = "01";
+					break;
+				}
+				case 2:
+				{
+					output_count_bits = "10";
+					break;
+				}
+				case 3:
+				{
+					output_count_bits = "11";
+					break;
+				}
+				default:
+				{
+					output_count_bits = "00";
+					break;
+				}
+			}
+
+
+			/* Encode Input Type 
+				"00": More then 3 Inputs, Non Identical Scripts, At least one Input is of Custom Type. 
+				"01": Less then 4 Inputs, Non Identical Scripts, At least one Input is of Custom Type. 
+				"10": Identical Script Types, Custom Script.
+				"11": Identical Script Types, Legacy, Segwit, or Taproot.
+			*/
+			std::vector<std::tuple<std::string, std::vector<unsigned char>>> inputs;
+			std::string input_type_bits, input_type;
+
+			if (!coinbase) {
+				bool input_type_identical = true;
+				std::tuple<std::string, std::vector<unsigned char>> input_result = get_input_type(mtx.vin.at(0), result);
+				inputs.push_back(input_result);
+				input_type = std::get<0>(input_result);
+				int input_length = mtx.vin.size();
+				for (int input_index = 1; input_index < input_length; input_index++) {
+					input_result = get_input_type(mtx.vin.at(input_index), result);
+					str::string input_type_second = std::get<0>(input_result);
+					if (input_type != input_type_second) {
+						input_type_identical = false;
+					}
+					inputs.push_back(input_result);
+				}
+				if (input_type_identical && input_type == "00") {
+					input_type_bits = "10";
+				} else if (input_type_identical && input_type != "00") {
+					input_type_bits = "11";
+				} else if (!input_type_identical && input_count_bits == "00") {
+					input_type_bits == "00";
+				} else if (!input_type_identical && input_count_bits != "00") {
+					input_type_bits = "01";
+				}
+			} else {
+				input_type_bits = "10";
+				input_type = "00";
+			}
+
+			/* Encode Lock Time
+				"00": If locktime is 0 enocde that in the control byte.
+				"11": If locktime is non zero but this is a coinbase transaction, or if this is a custom input input only transaction, Then no compresion is avaible for the locktime.
+				"01": If locktime is non zero and not a coinbase transaction transmite the two least significant bytes of the locktime and we'll brute force the remaninig bytes in the decoding.
+			*/
+			std::string locktime_bits;
+			switch(mtx.nLockTime) 
+			{
+				case 0: 
+				{
+					locktime_bits = "00";
+					break;
+				}
+				default: 
+				{
+					if (coinbase || input_type_bits == "10") {
+						locktime_bits = "11";
+					} else {
+						locktime_bits = "01";
+					}
+					break;
+				};
+			}
+
+			/* Encode Info Byte 
+				"xx": Version Encoding
+				"xx": LockTime Encoding
+				"xx": Input Count
+				"xx": Output Count
+			*/
+			result += "version_bits = "+version_bits+"\n";
+			result += "locktime_bits = "+locktime_bits+"\n";
+			result += "input_count_bits = "+input_count_bits+"\n";
+			result += "output_count_bits = "+output_count_bits+"\n";
+			std::string info_byte = version_bits;
+			info_byte += locktime_bits;
+			info_byte += input_count_bits;
+			info_byte += output_count_bits;
+
+			result += "Info Byte = "+info_byte+"\n";
+
+			/* Push the Info Byte to the Result */
+			hex = binary_to_hex(info_byte);
+			result += "Info Byte Hex = "+hex+"\n";
+			std::string compressed_transaction += hex;
+
+			/* Encode Version
+				If the Version was not encoded in the Info bit, Encode it as a VarInt here. 
+			*/
+			if (version_bits == "00") {
+				hex = to_varint(mtx.nVersion);
+				result += "Version Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			}
+			result += "Version = "+std::to_string(mtx.nVersion)+"\n";
+
+			/* Encode LockTime
+				If the locktime was not zero and this is not a coinbase transaction, Encode the two least signafigant bytes as Hex 
+				If the locktime was not zero and this is a coinbase transaction, encode the LockTime as a VarInt. 
+			*/
+			if (locktime_bits == "01") {
+				limit = pow(2, 16);
+				binary = std::bitset<16>(mtx.nLockTime % limit).to_string();
+				/* Push the Shortend Locktime Bytes */
+				hex = binary_to_hex(binary);
+				result += "Shortend Locktime Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			} else if (locktime_bits == "11") {
+				/* Push the LockTime encoded as a VarInt */
+				hex = to_varint(mtx.nLockTime);
+				result += "VarInt Locktime Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			}
+
+			/* Encode Input Count 
+				If the Input Count is greater then 3, then Encode the Input Count as a VarInt.
+			*/
+			if (input_count_bits == "00") {
+				/* Push the Input Count encoded as a VarInt */
+				hex = to_varint(mtx.vin.size());
+				result += "Input Count Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			}
+			result += "Input Count = "+std::to_string(mtx.vin.size())+"\n";
+
+			/* Encode Output Count 
+				If the Output Count is greater then 3, then Encode the Output Count as a VarInt.
+			*/
+			if (output_count_bits == "00") {
+				/* Push the Output Count encoded as a VarInt */
+				hex = to_varint(mtx.vout.size());
+				result += "Output Count Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			}
+			result += "Output Count = "+std::to_string(mtx.vout.size())+"\n";
+			result += "^^^^^^^^^INFO BYTE^^^^^^^^^\n";
+
+			/* Encode Squence 
+				"000": Non Identical, Non Standard Sequence/Inputs more then 3. Read Sequence Before Each Input.
+				"001": Identical, Non Standard Sequence. Read VarInt for Full Sequnce.
+				"010": Non Identical, Standard Sequence, Inputs less then 4. Read Next Byte For Encoded Sequences.
+				"011": Identical, Standard Sequence. 0xFFFFFFF0
+				"100": Identical, Standard Sequence. 0xFFFFFFFE
+				"101": Identical, Standard Sequence. 0xFFFFFFFF
+				"110": Identical, Standard Sequence. 0x00000000
+				"111": Null.
+			*/
+			std::vector<uint32_t> sequences;
+			bool identical_sequnce = true;
+			bool standard_sequence = true;
+			std::string sequence_bits;
+
+			sequences.push_back(mtx.vin.at(0).nSequence);
+			if (sequences.at(0) != 0x00000000 || sequences.at(0) != 0xFFFFFFF0 || sequences.at(0) != 0xFFFFFFFE || sequences.at(0) != 0xFFFFFFFF) {
+				standard_sequence = false;
+			}
+			input_length = mtx.vin.size();
+			for (input_index = 1; input_index < input_length; input_index++) {
+				if (mtx.vin.at(input_index).nSequence != sequences.at(0)) {
+					identical_sequnce = false;
+				}
+				if (mtx.vin.at(input_index).nSequence != 0x00000000 || mtx.vin.at(input_index).nSequence != 0xFFFFFFF0 || mtx.vin.at(input_index).nSequence != 0xFFFFFFFE || mtx.vin.at(input_index).nSequence != 0xFFFFFFFF) {
+					standard_sequence = false;
+				}
+				if (input_count_bits != "00") {
+					sequences.push_back(mtx.vin.at(input_index).nSequence);
+				}
+			}
+			if (identical_sequnce) {
+				switch(sequences.at(0))
+				{
+					case 0xFFFFFFF0: 
+					{
+						sequence_bits = "011";
+						break;
+					}
+					case 0xFFFFFFFE: 
+					{
+						sequence_bits = "100";
+						break;
+					}
+					case 0xFFFFFFFF: 
+					{
+						sequence_bits = "101";
+						break;
+					}
+					case 0x00000000: 
+					{
+						sequence_bits = "110";
+						break;
+					}
+					default: 
+					{
+						sequence_bits = "001";
+						break;
+					}
+				}
+			} else {
+				if (standard_sequence && input_count_bits != "00") {
+					sequence_bits = "010";
+				} else {
+					sequence_bits = "000";
+				}
+			}
+
+			/* Encode Output Type 
+				"000": Non Identical Script Types. Read Type before each Output.
+				"001": Identical Output Script Types, P2PK.
+				"010": Identical Output Script Types, P2SH.
+				"011": Identical Output Script Types, P2PKH.
+				"100": Identical Output Script Types, V0_P2WSH.
+				"101": Identical Output Script Types, V0_P2WPKH.
+				"110": Identical Output Script Types, P2TR.
+				"111": Identical Output Script Types, Custom Script.
+			*/
+			std::vector<std::tuple<std::string, std::vector<unsigned char>>> outputs;
+			std::tuple<std::string, std::vector<unsigned char>> output_result;
+			std::string output_type, output_type_second, output_type_bits;
+			bool output_type_identical = true;
+
+			output_result = get_output_type(mtx.vout.at(0), result);
+			outputs.push_back(output_result);
+			output_type = std::get<0>(output_result);
+			int output_length = mtx.vout.size();
+			for (int output_index = 1; output_index < output_length; output_index++) {
+				output_result = get_output_type(mtx.vout.at(output_index), result);
+				output_type_second = std::get<0>(output_result);
+				if (output_type != output_type_second) {
+					output_type_identical = false;
+				}
+				outputs.push_back(output_result);
+			}
+			if (output_type_identical) {
+				output_type_bits = output_type;
+			} else {
+				output_type_bits = "000";
+			}
+				
+			/* Encode Input Output Byte 
+				"xxx": Sequence Encoding
+				"xx": Input Encoding
+				"xxx": Output Encoding
+			*/
+			result += "sequence_bits = "+sequence_bits+"\n";
+			result += "input_type_bits = "+input_type_bits+"\n";
+			result += "output_type_bits = "+output_type_bits+"\n";
+			std::string io_byte = sequence_bits;
+			io_byte += input_type_bits;
+			io_byte += output_type_bits;
+			result += "Input Output Byte = "+io_byte+"\n";
+
+			/* Push the Input Output Byte to the Result */
+			hex = binary_to_hex(io_byte);
+			result += "Input Output Byte Hex = "+hex+"\n";
+			compressed_transaction += hex;
+
+			/* Encode Sequence 
+				"001": Identical Sequence, Non Standard, Encode as a Single VarInt
+				"010": Non Identical Sequence, Standard Encoding with less the 4 inputs, Encode as a Single Byte
+			*/
+			if (sequence_bits == "001") {
+				/* Push the Sequnece VarInt for the Inputs */
+				hex = to_varint(sequences.at(0));
+				result += "Sequence VarInt Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			} else if (sequence_bits == "010") {
+				binary = "";
+				int sequence_length = sequences.size();
+				for (int sequence_index = 0; sequence_index < sequence_length; sequence_index++) {
+					switch(sequences.at(sequence_index))
+					{
+						case 0x00000000: 
+						{
+							binary += "00";
+							break;
+						}
+						case 0xFFFFFFF0: 
+						{
+							binary += "01";
+							break;     
+						}
+						case 0xFFFFFFFE: 
+						{
+							binary += "10";
+							break;     
+						}
+						case 0xFFFFFFFF: 
+						{
+							binary += "11";
+							break;     
+						}
+						default: 
+						{
+							exit(1);
+						}
+					}
+				}
+				int binary_length = 8-binary.length();
+				for (int binary_index = 0; binary_index < binary_length; binary_index++){
+					binary += "00";
+				}
+				/* Push the Sequneces Byte for the Inputs Encoded as 2-3 bits */
+				hex = binary_to_hex(binary);
+				result += "Encoded Sequence Byte Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			}
+
+			/* Encode Input Type 
+				"01": Non Identical Input Types, Less then 4 Inputs, Encode as a Singe Byte
+			*/
+			if (input_type_bits == "01") {
+				binary = "";
+				input_length = inputs.size();
+				for (input_index = 0; input_index < input_length; input_index++) {
+					input_result = inputs.at(input_index);
+					input_type = std::get<0>(input_result);
+					result += "input_type("+std::to_string(input_index)+") =	"+input_type+"\n";
+					binary += input_type;
+				}
+				binary_length = 8-hex.length();
+				for (binary_index = 0; binary_index < binary_length; binary_index++) {
+					binary += "00";
+				}
+
+				/* Push Input Type Byte */
+				hex = binary_to_hex(binary);
+				result += "Encoded Input Type Byte Hex = "+hex+"\n";
+				compressed_transaction += hex;
+			}
+			result += "^^^^^^^^^IO BYTE^^^^^^^^^\n";
+
+			/* Encode Coinbase Byte 
+				"x": Coinbase Encoding
+			*/
+			std::string coinbase_bits = std::to_string(coinbase);
+			result += "coinbase_bits = "+std::to_string(coinbase)+"\n";
+			std::string cb_byte = coinbase_bits;
+			cb_byte += "0000000";
+
+			/* Push the CB Byte to the Result */
+			hex = binary_to_hex(cb_byte);
+			result += "CB Byte Hex = "+hex+"\n";
+			compressed_transaction += hex;
+
+
+			result += "^^^^^^^^^CB BYTE^^^^^^^^^^\n";
+			input_length = mtx.vin.size();
+			result += "length = "+std::to_string(input_length)+"\n";
+			for (input_index = 0; input_index < input_length; input_index++) {
+				result += "---index = "+std::to_string(input_index)+"\n";
+
+				/* Encode Sequence 
+					"000": Uncompressed Sequence, Encode VarInt
+				*/
+				if (sequence_bits == "000") {
+					/* Push Sequence */
+					hex = to_varint(mtx.vin.at(input_index).nSequence);
+					result += "Sequence = "+std::to_string(mtx.vin.at(input_index).nSequence)+"\n";
+					result += "Sequence Hex = "+hex+"\n";
+					compressed_transaction += hex;
+				}
+
+				/* Encode Input Type
+					"00": Uncompressed Input Type, Encode Next Byte
+				*/
+				if (input_type_bits == "00") {
+					input_result = inputs.at(input_index);
+					input_type = std::get<0>(input_result);
+					/* Push Input Type */
+					hex = binary_to_hex("000000"+input_type);
+					result += "Input Type Hex = "+hex+"\n";
+					compressed_transaction += hex;
+				} 
+
+				if (!coinbase) {
+					/* Encode TXID Block Index/Height 
+						If Not CoinBase: Encode TXID as its Block Index/Height
+					*/
+					tr = GetTransaction(nullptr, nullptr, mtx.vin.at(input_index).prevout.hash, consensus_params, hash);
+					txid = (*tr).GetHash();
+					std::vector<std::shared_ptr<const CTransaction>>::iterator itr;
+					{
+						// const uint256& conhash = mtx.vin.at(index).prevout.hash;
+						pindex = blockman->LookupBlockIndex(hash);
+						block_height = pindex->nHeight;
+						result += "Block Hash = "+pindex->GetBlockHash().GetHex()+"\n";
+						ReadBlockFromDisk(block, pindex, consensus_params);
+						int blocks_length = block.vtx.size();
+						for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
+							if ((*block.vtx.at(blocks_index)).GetHash() == txid) {
+								block_index = blocks_index;
+							}
+						}
+					}
+					/* Encode TXID 
+						If Block Index/Height Was Found: Encode TXID as its Block Index/Height
+					*/
+					if (block_index) {
+						/* Push the TXID */
+						hex = mtx.vin.at(input_index).prevout.hash.GetHex();
+						result += "Full TXID hex = "+hex+"\n";
+						compressed_transaction += hex;
+					} else {
+						/* Push Block Height */
+						hex = to_varint(block_height);
+						result += "Block Height Hex = "+hex+"\n";
+						result += "Block Height = "+std::to_string(block_height)+"\n";
+						compressed_transaction += hex;
+
+						/* Push Block Index */
+						hex = to_varint(block_index);
+						result += "Block Index Hex = "+hex+"\n";
+						result += "Block Index = "+std::to_string(block_index)+"\n";
+						compressed_transaction += hex;
+					}
+
+					/* Push Vout */
+					hex = to_varint(mtx.vin.at(input_index).prevout.n);
+					result += "Vout = "+std::to_string(mtx.vin.at(input_index).prevout.n)+"\n";
+					result += "VarInt Vout Hex = "+hex+"\n";
+					compressed_transaction += hex;
+				}
+
+				/* Encode Input 
+					"00": Custom Input
+					_: Compressed Input
+				*/
+				byte = binary_to_int("000000"+input_type);
+				if (input_type == "00") {
+					hex = serialize_script(mtx.vin.at(input_index).scriptSig);
+					int script_length = hex.length()/2;
+					hex2 = to_varint(script_length);
+					result += "Script Length = "+std::to_string(script_length)+"\n";
+					result += "Script Length Hex = "+hex2+"\n";
+					result += "Script = "+hex+"\n";
+
+					/* Push Script Length */
+					compressed_transaction += hex2;
+
+					/* Push Script */
+					compressed_transaction += hex;
+
+					int witness_count = mtx.vin.at(input_index).scriptWitness.stack.size();
+
+					/* Push Witness Count */
+					hex = to_varint(witness_count);
+					result += "Witness Script Count = "+std::to_string(witness_count)+"\n";
+					result += "Witness Script Count Hex = "+hex+"\n";
+					compressed_transaction += hex;
+					for (int witnesses_index = 0; witnesses_index < witness_count; witnesses_index++) {
+
+						int witness_length = mtx.vin.at(input_index).scriptWitness.stack.at(witnesses_index).size();
+						result += "Witness Script Length = "+std::to_string(witness_length)+"\n";
+
+						/* Push Witness Length */
+						hex = to_varint(witness_length);
+						result += "Witness Script Length Hex = "+hex+"\n";
+						compressed_transaction += hex;
+
+						/* Push Witness Script */
+						hex = bytes_to_hex(mtx.vin.at(input_index).scriptWitness.stack.at(witnesses_index));
+						result += "Witness Script = "+hex+"\n";
+						compressed_transaction += hex;
+
+					}
+				} else {
+					result += "LEGACY/SEGWIT/TAPROOT\n";
+					input_result = inputs.at(input_index);
+					bytes = std::get<1>(input_result);
+					hex = bytes_to_hex(bytes);
+
+					/* Push Compressed Signature */
+					hex2 = hex.substr(0, 128);
+					result += "Compressed Signature = "+hex2+"\n";
+					compressed_transaction += hex2;
+
+					/* Push Signature Hash Type */
+					hex3 = hex.substr(128, 2);
+					result += "Signature Hash Type = "+hex3+"\n";
+					compressed_transaction += hex3;
+				}
+			}
+			result += "^^^^^^^^^INPUT^^^^^^^^^\n";
+			output_length = mtx.vout.size();
+			for (output_index = 0; output_index < output_length; output_index++) {
+				output_result = outputs.at(output_index);
+				output_type = std::get<0>(output_result);
+
+				/* Encode Output Type 
+					"000": Uncompressed Output Type, Encode Next Byte
+				*/
+				if (output_type_bits == "000") {
+					/* Push Output Type */
+					hex = binary_to_hex("00000"+output_type);
+					result += "Output Type Hex = "+hex+"\n";
+					compressed_transaction += hex;
+				}
+
+				result += "Amuont = "+std::to_string(mtx.vout.at(output_index).nValue)+"\n";
+
+				/* Push Amount */
+				hex = to_varint(mtx.vout.at(output_index).nValue);
+				result += "Amount Hex = "+hex+"\n";
+				compressed_transaction += hex;
+
+				/* Encode Output 
+					"111": Uncompressed Output, Custom Script
+					_: Push Script Hash Minus Op Code Bytes
+				*/
+				if (output_type == "111") {
+					hex = serialize_script(mtx.vout.at(output_index).scriptPubKey);
+					script_length = hex.length();
+					result += "Script Length = "+std::to_string(script_length)+"\n";
+
+					/* Push Script Length */
+					hex2 = int_to_hex(script_length);
+					result += "Script Length Hex = "+hex2+"\n";
+					compressed_transaction += hex2;
+
+					/* Push Script */
+					result += "Script = "+hex+"\n";
+					compressed_transaction += hex;
+				} else {
+					result += "Script Type = "+output_type+"\n";
+					/* Push Script*/
+					hex = bytes_to_hex(std::get<1>(output_result));
+					result += "Script = "+hex+"\n";
+					compressed_transaction += hex;
+				}
+
+			}
+			result += "^^^^^^^^^OUTPUT^^^^^^^^^\n";
+
+			return result;
+			transaction_result = compressed_transaction;
+			
+			
+            //DecompressRawTransaction(transaction_result, active_chainstate, rmtx, result);
+			return result;
+
+
+            int index, length, length2, length3;
+            result += "hash rmtx = "+rmtx.GetHash().GetHex()+"\n";
+            result += "hash mtx = "+mtx.GetHash().GetHex()+"\n";
+
+            if (rmtx.nVersion != mtx.nVersion) {
+                result += "VERSION DOES NOT MATCH: "+std::to_string(rmtx.nVersion)+" != "+std::to_string(mtx.nVersion)+"\n";
+            }
+            if (rmtx.nLockTime != mtx.nLockTime) {
+                result += "LOCKTIME DOES NOT MATCH: "+std::to_string(rmtx.nLockTime)+" != "+std::to_string(mtx.nLockTime)+"\n";
+            }
+            bool vin_valid = true;
+            if (rmtx.vin.size() != mtx.vin.size()) {
+                result += "    LENGTHS VARY: "+std::to_string(rmtx.vin.size())+" != "+std::to_string(mtx.vin.size())+"\n";
+                vin_valid = false;
+            }
+            length = std::max(rmtx.vin.size(), mtx.vin.size());
+            for (index = 0; index < length; index++) {
+                result += "    INDEX: "+std::to_string(index)+"\n";
+                length2 = mtx.vin.size();
+                length3 = rmtx.vin.size();
+                if (index < length2 && index < length3) {
+                    if (rmtx.vin.at(index).prevout != mtx.vin.at(index).prevout) {
+                        if (rmtx.vin.at(index).prevout.hash != mtx.vin.at(index).prevout.hash) {
+                            result += "        PREVOUT HASH: "+rmtx.vin.at(index).prevout.hash.GetHex()+" != "+mtx.vin.at(index).prevout.hash.GetHex()+"\n";
+                            vin_valid = false;
+                        }
+                        if (rmtx.vin.at(index).prevout.n != mtx.vin.at(index).prevout.n) {
+                            result += "        PREVOUT N: "+std::to_string(rmtx.vin.at(index).prevout.n)+" != "+std::to_string(mtx.vin.at(index).prevout.n)+"\n";
+                            vin_valid = false;
+                        }
+                    }
+                    if (HexStr(rmtx.vin.at(index).scriptSig) != HexStr(mtx.vin.at(index).scriptSig)) {
+                        result += "    SCRIPTSIG DOES NOT MATCH: "+HexStr(rmtx.vin.at(index).scriptSig)+" != "+HexStr(mtx.vin.at(index).scriptSig)+"\n";
+                        vin_valid = false;
+                    }
+                    if (rmtx.vin.at(index).nSequence != mtx.vin.at(index).nSequence) {
+                        result += "    SEQUENCE DOES NOT MATCH: "+std::to_string(rmtx.vin.at(index).nSequence)+" != "+std::to_string(mtx.vin.at(index).nSequence)+"\n";
+                        vin_valid = false;
+                    }
+                    if (rmtx.vin.at(index).scriptWitness.ToString() != mtx.vin.at(index).scriptWitness.ToString()) {
+                        result += "    SCRIPTWITNESS DOES NOT MATCH: "+rmtx.vin.at(index).scriptWitness.ToString()+" != "+mtx.vin.at(index).scriptWitness.ToString()+"\n";
+                        vin_valid = false;
+                    }
+                } else if (index < length2) {
+                    result += "    NO VIN FOR RMTX\n";
+                    vin_valid = false;
+                } else {
+                    result += "    NO VIN FOR MXT\n";
+                    vin_valid = false;
+                }
+            }
+            if (rmtx.vout != mtx.vout) {
+                result += "VOUT DOES NOT MATCH:\n";
+                if (rmtx.vout.size() != mtx.vout.size()) {
+                    result += "    LENGTHS VARY: "+std::to_string(rmtx.vout.size())+" != "+std::to_string(mtx.vout.size())+"\n";
+                }
+                length = std::max(rmtx.vout.size(), mtx.vout.size());
+                for (index = 0; index < length; index++) {
+                    result += "    INDEX: "+std::to_string(index)+"\n";
+                    length2 = mtx.vout.size();
+                    length3 = rmtx.vout.size();
+                    if (index < length2 && index < length3) {
+                        if (HexStr(rmtx.vout.at(index).scriptPubKey) != HexStr(mtx.vout.at(index).scriptPubKey)) {
+                            result += "    SCIRPTPUBKEY DOES NOT MATCH: "+HexStr(rmtx.vout.at(index).scriptPubKey)+" != "+HexStr(mtx.vout.at(index).scriptPubKey)+"\n";
+                        }
+                        if (rmtx.vout.at(index).nValue != mtx.vout.at(index).nValue) {
+                            result += "    VALUE DOES NOT MATCH: "+std::to_string(rmtx.vout.at(index).nValue)+" != "+std::to_string(mtx.vout.at(index).nValue)+"\n";
+                        }
+                    } else if (index < length2) {
+                        result += "    NO VOUT FOR RMTX\n";
+                    } else {
+                        result += "    NO VIN FOR MXT\n";
+                    }
+                }
+            }
+            if (rmtx.nVersion == mtx.nVersion && rmtx.nLockTime == mtx.nLockTime && vin_valid && rmtx.vout == mtx.vout) {
+                result += "COMPLETED NO PROBLEMS\n";
+            } else {
+                throw JSONRPCError(RPC_MISC_ERROR, "Unable to RoundTrip");
+            }
+            result += "---------------------R------------------------\n";
+            return result;
         }
     };
 }
@@ -1157,737 +1880,6 @@ static RPCHelpMan decodepsbt()
             UniValue ripemd160_preimages(UniValue::VOBJ);
             for (const auto& [hash, preimage] : input.ripemd160_preimages) {
                 ripemd160_preimages.pushKV(HexStr(hash), HexStr(preimage));
-            }
-            in.pushKV("ripemd160_preimages", ripemd160_preimages);
-        }
-
-        // Sha256 hash preimages
-        if (!input.sha256_preimages.empty()) {
-            UniValue sha256_preimages(UniValue::VOBJ);
-            for (const auto& [hash, preimage] : input.sha256_preimages) {
-                sha256_preimages.pushKV(HexStr(hash), HexStr(preimage));
-            }
-            in.pushKV("sha256_preimages", sha256_preimages);
-        }
-
-        // Hash160 hash preimages
-        if (!input.hash160_preimages.empty()) {
-            UniValue hash160_preimages(UniValue::VOBJ);
-            for (const auto& [hash, preimage] : input.hash160_preimages) {
-                hash160_preimages.pushKV(HexStr(hash), HexStr(preimage));
-            }
-            in.pushKV("hash160_preimages", hash160_preimages);
-        }
-
-        // Hash256 hash preimages
-        if (!input.hash256_preimages.empty()) {
-            UniValue hash256_preimages(UniValue::VOBJ);
-            for (const auto& [hash, preimage] : input.hash256_preimages) {
-                hash256_preimages.pushKV(HexStr(hash), HexStr(preimage));
-            }
-            in.pushKV("hash256_preimages", hash256_preimages);
-        }
-
-        // Taproot key path signature
-        if (!input.m_tap_key_sig.empty()) {
-            in.pushKV("taproot_key_path_sig", HexStr(input.m_tap_key_sig));
-        }
-
-        // Taproot script path signatures
-        if (!input.m_tap_script_sigs.empty()) {
-            UniValue script_sigs(UniValue::VARR);
-            for (const auto& [pubkey_leaf, sig] : input.m_tap_script_sigs) {
-                const auto& [xonly, leaf_hash] = pubkey_leaf;
-                UniValue sigobj(UniValue::VOBJ);
-                sigobj.pushKV("pubkey", HexStr(xonly));
-                sigobj.pushKV("leaf_hash", HexStr(leaf_hash));
-                sigobj.pushKV("sig", HexStr(sig));
-                script_sigs.push_back(sigobj);
-            }
-            in.pushKV("taproot_script_path_sigs", script_sigs);
-        }
-
-        // Taproot leaf scripts
-        if (!input.m_tap_scripts.empty()) {
-            UniValue tap_scripts(UniValue::VARR);
-            for (const auto& [leaf, control_blocks] : input.m_tap_scripts) {
-                const auto& [script, leaf_ver] = leaf;
-                UniValue script_info(UniValue::VOBJ);
-                script_info.pushKV("script", HexStr(script));
-                script_info.pushKV("leaf_ver", leaf_ver);
-                UniValue control_blocks_univ(UniValue::VARR);
-                for (const auto& control_block : control_blocks) {
-                    control_blocks_univ.push_back(HexStr(control_block));
-                }
-                script_info.pushKV("control_blocks", control_blocks_univ);
-                tap_scripts.push_back(script_info);
-            }
-            in.pushKV("taproot_scripts", tap_scripts);
-        }
-
-        // Taproot bip32 keypaths
-        if (!input.m_tap_bip32_paths.empty()) {
-            UniValue keypaths(UniValue::VARR);
-            for (const auto& [xonly, leaf_origin] : input.m_tap_bip32_paths) {
-                const auto& [leaf_hashes, origin] = leaf_origin;
-                UniValue path_obj(UniValue::VOBJ);
-                path_obj.pushKV("pubkey", HexStr(xonly));
-                path_obj.pushKV("master_fingerprint", strprintf("%08x", ReadBE32(origin.fingerprint)));
-                path_obj.pushKV("path", WriteHDKeypath(origin.path));
-                UniValue leaf_hashes_arr(UniValue::VARR);
-                for (const auto& leaf_hash : leaf_hashes) {
-                    leaf_hashes_arr.push_back(HexStr(leaf_hash));
-                }
-                path_obj.pushKV("leaf_hashes", leaf_hashes_arr);
-                keypaths.push_back(path_obj);
-            }
-            in.pushKV("taproot_bip32_derivs", keypaths);
-        }
-
-        // Taproot internal key
-        if (!input.m_tap_internal_key.IsNull()) {
-            in.pushKV("taproot_internal_key", HexStr(input.m_tap_internal_key));
-        }
-
-        // Write taproot merkle root
-        if (!input.m_tap_merkle_root.IsNull()) {
-            in.pushKV("taproot_merkle_root", HexStr(input.m_tap_merkle_root));
-        }
-
-        // Proprietary
-        if (!input.m_proprietary.empty()) {
-            UniValue proprietary(UniValue::VARR);
-            for (const auto& entry : input.m_proprietary) {
-                UniValue this_prop(UniValue::VOBJ);
-                this_prop.pushKV("identifier", HexStr(entry.identifier));
-                this_prop.pushKV("subtype", entry.subtype);
-                this_prop.pushKV("key", HexStr(entry.key));
-                this_prop.pushKV("value", HexStr(entry.value));
-                proprietary.push_back(this_prop);
-            }
-            in.pushKV("proprietary", proprietary);
-        }
-
-        // Unknown data
-        if (input.unknown.size() > 0) {
-            UniValue unknowns(UniValue::VOBJ);
-            for (auto entry : input.unknown) {
-                unknowns.pushKV(HexStr(entry.first), HexStr(entry.second));
-            }
-            in.pushKV("unknown", unknowns);
-        }
-
-        inputs.push_back(in);
-    }
-    result.pushKV("inputs", inputs);
-
-    // outputs
-    CAmount output_value = 0;
-    UniValue outputs(UniValue::VARR);
-    for (unsigned int i = 0; i < psbtx.outputs.size(); ++i) {
-        const PSBTOutput& output = psbtx.outputs[i];
-        UniValue out(UniValue::VOBJ);
-        // Redeem script and witness script
-        if (!output.redeem_script.empty()) {
-            UniValue r(UniValue::VOBJ);
-            ScriptToUniv(output.redeem_script, /*out=*/r);
-            out.pushKV("redeem_script", r);
-        }
-        if (!output.witness_script.empty()) {
-            UniValue r(UniValue::VOBJ);
-            ScriptToUniv(output.witness_script, /*out=*/r);
-            out.pushKV("witness_script", r);
-        }
-
-        // keypaths
-        if (!output.hd_keypaths.empty()) {
-            UniValue keypaths(UniValue::VARR);
-            for (auto entry : output.hd_keypaths) {
-                UniValue keypath(UniValue::VOBJ);
-                keypath.pushKV("pubkey", HexStr(entry.first));
-                keypath.pushKV("master_fingerprint", strprintf("%08x", ReadBE32(entry.second.fingerprint)));
-                keypath.pushKV("path", WriteHDKeypath(entry.second.path));
-                keypaths.push_back(keypath);
-            }
-            out.pushKV("bip32_derivs", keypaths);
-        }
-
-        // Taproot internal key
-        if (!output.m_tap_internal_key.IsNull()) {
-            out.pushKV("taproot_internal_key", HexStr(output.m_tap_internal_key));
-        }
-
-        // Taproot tree
-        if (!output.m_tap_tree.empty()) {
-            UniValue tree(UniValue::VARR);
-            for (const auto& [depth, leaf_ver, script] : output.m_tap_tree) {
-                UniValue elem(UniValue::VOBJ);
-                elem.pushKV("depth", (int)depth);
-                elem.pushKV("leaf_ver", (int)leaf_ver);
-                elem.pushKV("script", HexStr(script));
-                tree.push_back(elem);
-            }
-            out.pushKV("taproot_tree", tree);
-        }
-
-        // Taproot bip32 keypaths
-        if (!output.m_tap_bip32_paths.empty()) {
-            UniValue keypaths(UniValue::VARR);
-            for (const auto& [xonly, leaf_origin] : output.m_tap_bip32_paths) {
-                const auto& [leaf_hashes, origin] = leaf_origin;
-                UniValue path_obj(UniValue::VOBJ);
-                path_obj.pushKV("pubkey", HexStr(xonly));
-                path_obj.pushKV("master_fingerprint", strprintf("%08x", ReadBE32(origin.fingerprint)));
-                path_obj.pushKV("path", WriteHDKeypath(origin.path));
-                UniValue leaf_hashes_arr(UniValue::VARR);
-                for (const auto& leaf_hash : leaf_hashes) {
-                    leaf_hashes_arr.push_back(HexStr(leaf_hash));
-                }
-                path_obj.pushKV("leaf_hashes", leaf_hashes_arr);
-                keypaths.push_back(path_obj);
-            }
-            out.pushKV("taproot_bip32_derivs", keypaths);
-        }
-
-        // Proprietary
-        if (!output.m_proprietary.empty()) {
-            UniValue proprietary(UniValue::VARR);
-            for (const auto& entry : output.m_proprietary) {
-                UniValue this_prop(UniValue::VOBJ);
-                this_prop.pushKV("identifier", HexStr(entry.identifier));
-                this_prop.pushKV("subtype", entry.subtype);
-                this_prop.pushKV("key", HexStr(entry.key));
-                this_prop.pushKV("value", HexStr(entry.value));
-                proprietary.push_back(this_prop);
-            }
-            out.pushKV("proprietary", proprietary);
-        }
-
-        // Unknown data
-        if (output.unknown.size() > 0) {
-            UniValue unknowns(UniValue::VOBJ);
-            for (auto entry : output.unknown) {
-                unknowns.pushKV(HexStr(entry.first), HexStr(entry.second));
-            }
-            out.pushKV("unknown", unknowns);
-        }
-
-        outputs.push_back(out);
-
-        // Fee calculation
-        if (MoneyRange(psbtx.tx->vout[i].nValue) && MoneyRange(output_value + psbtx.tx->vout[i].nValue)) {
-            output_value += psbtx.tx->vout[i].nValue;
-        } else {
-            // Hack to just not show fee later
-            have_all_utxos = false;
-        }
-    }
-    result.pushKV("outputs", outputs);
-    if (have_all_utxos) {
-        result.pushKV("fee", ValueFromAmount(total_in - output_value));
-    }
-
-    return result;
-},
-    };
-}
-
-static RPCHelpMan combinepsbt()
-{
-    return RPCHelpMan{"combinepsbt",
-                "\nCombine multiple partially signed Bitcoin transactions into one transaction.\n"
-                "Implements the Combiner role.\n",
-                {
-                    {"txs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The base64 strings of partially signed transactions",
-                        {
-                            {"psbt", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "A base64 string of a PSBT"},
-                        },
-                        },
-                },
-                RPCResult{
-                    RPCResult::Type::STR, "", "The base64-encoded partially signed transaction"
-                },
-                RPCExamples{
-                    HelpExampleCli("combinepsbt", R"('["mybase64_1", "mybase64_2", "mybase64_3"]')")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    RPCTypeCheck(request.params, {UniValue::VARR}, true);
-
-    // Unserialize the transactions
-    std::vector<PartiallySignedTransaction> psbtxs;
-    UniValue txs = request.params[0].get_array();
-    if (txs.empty()) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Parameter 'txs' cannot be empty");
-    }
-    for (unsigned int i = 0; i < txs.size(); ++i) {
-        PartiallySignedTransaction psbtx;
-        std::string error;
-        if (!DecodeBase64PSBT(psbtx, txs[i].get_str(), error)) {
-            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("TX decode failed %s", error));
-        }
-        psbtxs.push_back(psbtx);
-    }
-
-    PartiallySignedTransaction merged_psbt;
-    const TransactionError error = CombinePSBTs(merged_psbt, psbtxs);
-    if (error != TransactionError::OK) {
-        throw JSONRPCTransactionError(error);
-    }
-
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    ssTx << merged_psbt;
-    return EncodeBase64(ssTx);
-},
-    };
-}
-
-static RPCHelpMan finalizepsbt()
-{
-    return RPCHelpMan{"finalizepsbt",
-                "Finalize the inputs of a PSBT. If the transaction is fully signed, it will produce a\n"
-                "network serialized transaction which can be broadcast with sendrawtransaction. Otherwise a PSBT will be\n"
-                "created which has the final_scriptSig and final_scriptWitness fields filled for inputs that are complete.\n"
-                "Implements the Finalizer and Extractor roles.\n",
-                {
-                    {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "A base64 string of a PSBT"},
-                    {"extract", RPCArg::Type::BOOL, RPCArg::Default{true}, "If true and the transaction is complete,\n"
-            "                             extract and return the complete transaction in normal network serialization instead of the PSBT."},
-                },
-                RPCResult{
-                    RPCResult::Type::OBJ, "", "",
-                    {
-                        {RPCResult::Type::STR, "psbt", /*optional=*/true, "The base64-encoded partially signed transaction if not extracted"},
-                        {RPCResult::Type::STR_HEX, "hex", /*optional=*/true, "The hex-encoded network transaction if extracted"},
-                        {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
-                    }
-                },
-                RPCExamples{
-                    HelpExampleCli("finalizepsbt", "\"psbt\"")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL}, true);
-
-    // Unserialize the transactions
-    PartiallySignedTransaction psbtx;
-    std::string error;
-    if (!DecodeBase64PSBT(psbtx, request.params[0].get_str(), error)) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("TX decode failed %s", error));
-    }
-
-    bool extract = request.params[1].isNull() || (!request.params[1].isNull() && request.params[1].get_bool());
-
-    CMutableTransaction mtx;
-    bool complete = FinalizeAndExtractPSBT(psbtx, mtx);
-
-    UniValue result(UniValue::VOBJ);
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    std::string result_str;
-
-    if (complete && extract) {
-        ssTx << mtx;
-        result_str = HexStr(ssTx);
-        result.pushKV("hex", result_str);
-    } else {
-        ssTx << psbtx;
-        result_str = EncodeBase64(ssTx.str());
-        result.pushKV("psbt", result_str);
-    }
-    result.pushKV("complete", complete);
-
-    return result;
-},
-    };
-}
-
-static RPCHelpMan createpsbt()
-{
-    return RPCHelpMan{"createpsbt",
-                "\nCreates a transaction in the Partially Signed Transaction format.\n"
-                "Implements the Creator role.\n",
-                CreateTxDoc(),
-                RPCResult{
-                    RPCResult::Type::STR, "", "The resulting raw transaction (base64-encoded string)"
-                },
-                RPCExamples{
-                    HelpExampleCli("createpsbt", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-
-    RPCTypeCheck(request.params, {
-        UniValue::VARR,
-        UniValueType(), // ARR or OBJ, checked later
-        UniValue::VNUM,
-        UniValue::VBOOL,
-        }, true
-    );
-
-    std::optional<bool> rbf;
-    if (!request.params[3].isNull()) {
-        rbf = request.params[3].isTrue();
-    }
-    CMutableTransaction rawTx = ConstructTransaction(request.params[0], request.params[1], request.params[2], rbf);
-
-    // Make a blank psbt
-    PartiallySignedTransaction psbtx;
-    psbtx.tx = rawTx;
-    for (unsigned int i = 0; i < rawTx.vin.size(); ++i) {
-        psbtx.inputs.push_back(PSBTInput());
-    }
-    for (unsigned int i = 0; i < rawTx.vout.size(); ++i) {
-        psbtx.outputs.push_back(PSBTOutput());
-    }
-
-    // Serialize the PSBT
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    ssTx << psbtx;
-
-    return EncodeBase64(ssTx);
-},
-    };
-}
-
-static RPCHelpMan converttopsbt()
-{
-    return RPCHelpMan{"converttopsbt",
-                "\nConverts a network serialized transaction to a PSBT. This should be used only with createrawtransaction and fundrawtransaction\n"
-                "createpsbt and walletcreatefundedpsbt should be used for new applications.\n",
-                {
-                    {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The hex string of a raw transaction"},
-                    {"permitsigdata", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, any signatures in the input will be discarded and conversion\n"
-                            "                              will continue. If false, RPC will fail if any signatures are present."},
-                    {"iswitness", RPCArg::Type::BOOL, RPCArg::DefaultHint{"depends on heuristic tests"}, "Whether the transaction hex is a serialized witness transaction.\n"
-                        "If iswitness is not present, heuristic tests will be used in decoding.\n"
-                        "If true, only witness deserialization will be tried.\n"
-                        "If false, only non-witness deserialization will be tried.\n"
-                        "This boolean should reflect whether the transaction has inputs\n"
-                        "(e.g. fully valid, or on-chain transactions), if known by the caller."
-                    },
-                },
-                RPCResult{
-                    RPCResult::Type::STR, "", "The resulting raw transaction (base64-encoded string)"
-                },
-                RPCExamples{
-                            "\nCreate a transaction\n"
-                            + HelpExampleCli("createrawtransaction", "\"[{\\\"txid\\\":\\\"myid\\\",\\\"vout\\\":0}]\" \"[{\\\"data\\\":\\\"00010203\\\"}]\"") +
-                            "\nConvert the transaction to a PSBT\n"
-                            + HelpExampleCli("converttopsbt", "\"rawtransaction\"")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL, UniValue::VBOOL}, true);
-
-    // parse hex string from parameter
-    CMutableTransaction tx;
-    bool permitsigdata = request.params[1].isNull() ? false : request.params[1].get_bool();
-    bool witness_specified = !request.params[2].isNull();
-    bool iswitness = witness_specified ? request.params[2].get_bool() : false;
-    const bool try_witness = witness_specified ? iswitness : true;
-    const bool try_no_witness = witness_specified ? !iswitness : true;
-    if (!DecodeHexTx(tx, request.params[0].get_str(), try_no_witness, try_witness)) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
-    }
-
-    // Remove all scriptSigs and scriptWitnesses from inputs
-    for (CTxIn& input : tx.vin) {
-        if ((!input.scriptSig.empty() || !input.scriptWitness.IsNull()) && !permitsigdata) {
-            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Inputs must not have scriptSigs and scriptWitnesses");
-        }
-        input.scriptSig.clear();
-        input.scriptWitness.SetNull();
-    }
-
-    // Make a blank psbt
-    PartiallySignedTransaction psbtx;
-    psbtx.tx = tx;
-    for (unsigned int i = 0; i < tx.vin.size(); ++i) {
-        psbtx.inputs.push_back(PSBTInput());
-    }
-    for (unsigned int i = 0; i < tx.vout.size(); ++i) {
-        psbtx.outputs.push_back(PSBTOutput());
-    }
-
-    // Serialize the PSBT
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    ssTx << psbtx;
-
-    return EncodeBase64(ssTx);
-},
-    };
-}
-
-static RPCHelpMan utxoupdatepsbt()
-{
-    return RPCHelpMan{"utxoupdatepsbt",
-            "\nUpdates all segwit inputs and outputs in a PSBT with data from output descriptors, the UTXO set or the mempool.\n",
-            {
-                {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "A base64 string of a PSBT"},
-                {"descriptors", RPCArg::Type::ARR, RPCArg::Optional::OMITTED_NAMED_ARG, "An array of either strings or objects", {
-                    {"", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "An output descriptor"},
-                    {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "An object with an output descriptor and extra information", {
-                         {"desc", RPCArg::Type::STR, RPCArg::Optional::NO, "An output descriptor"},
-                         {"range", RPCArg::Type::RANGE, RPCArg::Default{1000}, "Up to what index HD chains should be explored (either end or [begin,end])"},
-                    }},
-                }},
-            },
-            RPCResult {
-                    RPCResult::Type::STR, "", "The base64-encoded partially signed transaction with inputs updated"
-            },
-            RPCExamples {
-                HelpExampleCli("utxoupdatepsbt", "\"psbt\"")
-            },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VARR}, true);
-
-    // Unserialize the transactions
-    PartiallySignedTransaction psbtx;
-    std::string error;
-    if (!DecodeBase64PSBT(psbtx, request.params[0].get_str(), error)) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("TX decode failed %s", error));
-    }
-
-    // Parse descriptors, if any.
-    FlatSigningProvider provider;
-    if (!request.params[1].isNull()) {
-        auto descs = request.params[1].get_array();
-        for (size_t i = 0; i < descs.size(); ++i) {
-            EvalDescriptorStringOrObject(descs[i], provider);
-        }
-    }
-    // We don't actually need private keys further on; hide them as a precaution.
-    HidingSigningProvider public_provider(&provider, /*hide_secret=*/true, /*hide_origin=*/false);
-
-    // Fetch previous transactions (inputs):
-    CCoinsView viewDummy;
-    CCoinsViewCache view(&viewDummy);
-    {
-        NodeContext& node = EnsureAnyNodeContext(request.context);
-        const CTxMemPool& mempool = EnsureMemPool(node);
-        ChainstateManager& chainman = EnsureChainman(node);
-        LOCK2(cs_main, mempool.cs);
-        CCoinsViewCache &viewChain = chainman.ActiveChainstate().CoinsTip();
-        CCoinsViewMemPool viewMempool(&viewChain, mempool);
-        view.SetBackend(viewMempool); // temporarily switch cache backend to db+mempool view
-
-        for (const CTxIn& txin : psbtx.tx->vin) {
-            view.AccessCoin(txin.prevout); // Load entries from viewChain into view; can fail.
-        }
-
-        view.SetBackend(viewDummy); // switch back to avoid locking mempool for too long
-    }
-
-    // Fill the inputs
-    const PrecomputedTransactionData txdata = PrecomputePSBTData(psbtx);
-    for (unsigned int i = 0; i < psbtx.tx->vin.size(); ++i) {
-        PSBTInput& input = psbtx.inputs.at(i);
-
-        if (input.non_witness_utxo || !input.witness_utxo.IsNull()) {
-            continue;
-        }
-
-        const Coin& coin = view.AccessCoin(psbtx.tx->vin[i].prevout);
-
-        if (IsSegWitOutput(provider, coin.out.scriptPubKey)) {
-            input.witness_utxo = coin.out;
-        }
-
-        // Update script/keypath information using descriptor data.
-        // Note that SignPSBTInput does a lot more than just constructing ECDSA signatures
-        // we don't actually care about those here, in fact.
-        SignPSBTInput(public_provider, psbtx, i, &txdata, /*sighash=*/1);
-    }
-
-    // Update script/keypath information using descriptor data.
-    for (unsigned int i = 0; i < psbtx.tx->vout.size(); ++i) {
-        UpdatePSBTOutput(public_provider, psbtx, i);
-    }
-
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    ssTx << psbtx;
-    return EncodeBase64(ssTx);
-},
-    };
-}
-
-static RPCHelpMan joinpsbts()
-{
-    return RPCHelpMan{"joinpsbts",
-            "\nJoins multiple distinct PSBTs with different inputs and outputs into one PSBT with inputs and outputs from all of the PSBTs\n"
-            "No input in any of the PSBTs can be in more than one of the PSBTs.\n",
-            {
-                {"txs", RPCArg::Type::ARR, RPCArg::Optional::NO, "The base64 strings of partially signed transactions",
-                    {
-                        {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "A base64 string of a PSBT"}
-                    }}
-            },
-            RPCResult {
-                    RPCResult::Type::STR, "", "The base64-encoded partially signed transaction"
-            },
-            RPCExamples {
-                HelpExampleCli("joinpsbts", "\"psbt\"")
-            },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    RPCTypeCheck(request.params, {UniValue::VARR}, true);
-
-    // Unserialize the transactions
-    std::vector<PartiallySignedTransaction> psbtxs;
-    UniValue txs = request.params[0].get_array();
-
-    if (txs.size() <= 1) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "At least two PSBTs are required to join PSBTs.");
-    }
-
-    uint32_t best_version = 1;
-    uint32_t best_locktime = 0xffffffff;
-    for (unsigned int i = 0; i < txs.size(); ++i) {
-        PartiallySignedTransaction psbtx;
-        std::string error;
-        if (!DecodeBase64PSBT(psbtx, txs[i].get_str(), error)) {
-            throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("TX decode failed %s", error));
-        }
-        psbtxs.push_back(psbtx);
-        // Choose the highest version number
-        if (static_cast<uint32_t>(psbtx.tx->nVersion) > best_version) {
-            best_version = static_cast<uint32_t>(psbtx.tx->nVersion);
-        }
-        // Choose the lowest lock time
-        if (psbtx.tx->nLockTime < best_locktime) {
-            best_locktime = psbtx.tx->nLockTime;
-        }
-    }
-
-    // Create a blank psbt where everything will be added
-    PartiallySignedTransaction merged_psbt;
-    merged_psbt.tx = CMutableTransaction();
-    merged_psbt.tx->nVersion = static_cast<int32_t>(best_version);
-    merged_psbt.tx->nLockTime = best_locktime;
-
-    // Merge
-    for (auto& psbt : psbtxs) {
-        for (unsigned int i = 0; i < psbt.tx->vin.size(); ++i) {
-            if (!merged_psbt.AddInput(psbt.tx->vin[i], psbt.inputs[i])) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Input %s:%d exists in multiple PSBTs", psbt.tx->vin[i].prevout.hash.ToString(), psbt.tx->vin[i].prevout.n));
-            }
-        }
-        for (unsigned int i = 0; i < psbt.tx->vout.size(); ++i) {
-            merged_psbt.AddOutput(psbt.tx->vout[i], psbt.outputs[i]);
-        }
-        for (auto& xpub_pair : psbt.m_xpubs) {
-            if (merged_psbt.m_xpubs.count(xpub_pair.first) == 0) {
-                merged_psbt.m_xpubs[xpub_pair.first] = xpub_pair.second;
-            } else {
-                merged_psbt.m_xpubs[xpub_pair.first].insert(xpub_pair.second.begin(), xpub_pair.second.end());
-            }
-        }
-        merged_psbt.unknown.insert(psbt.unknown.begin(), psbt.unknown.end());
-    }
-
-    // Generate list of shuffled indices for shuffling inputs and outputs of the merged PSBT
-    std::vector<int> input_indices(merged_psbt.inputs.size());
-    std::iota(input_indices.begin(), input_indices.end(), 0);
-    std::vector<int> output_indices(merged_psbt.outputs.size());
-    std::iota(output_indices.begin(), output_indices.end(), 0);
-
-    // Shuffle input and output indices lists
-    Shuffle(input_indices.begin(), input_indices.end(), FastRandomContext());
-    Shuffle(output_indices.begin(), output_indices.end(), FastRandomContext());
-
-    PartiallySignedTransaction shuffled_psbt;
-    shuffled_psbt.tx = CMutableTransaction();
-    shuffled_psbt.tx->nVersion = merged_psbt.tx->nVersion;
-    shuffled_psbt.tx->nLockTime = merged_psbt.tx->nLockTime;
-    for (int i : input_indices) {
-        shuffled_psbt.AddInput(merged_psbt.tx->vin[i], merged_psbt.inputs[i]);
-    }
-    for (int i : output_indices) {
-        shuffled_psbt.AddOutput(merged_psbt.tx->vout[i], merged_psbt.outputs[i]);
-    }
-    shuffled_psbt.unknown.insert(merged_psbt.unknown.begin(), merged_psbt.unknown.end());
-
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    ssTx << shuffled_psbt;
-    return EncodeBase64(ssTx);
-},
-    };
-}
-
-static RPCHelpMan analyzepsbt()
-{
-    return RPCHelpMan{"analyzepsbt",
-            "\nAnalyzes and provides information about the current status of a PSBT and its inputs\n",
-            {
-                {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "A base64 string of a PSBT"}
-            },
-            RPCResult {
-                RPCResult::Type::OBJ, "", "",
-                {
-                    {RPCResult::Type::ARR, "inputs", /*optional=*/true, "",
-                    {
-                        {RPCResult::Type::OBJ, "", "",
-                        {
-                            {RPCResult::Type::BOOL, "has_utxo", "Whether a UTXO is provided"},
-                            {RPCResult::Type::BOOL, "is_final", "Whether the input is finalized"},
-                            {RPCResult::Type::OBJ, "missing", /*optional=*/true, "Things that are missing that are required to complete this input",
-                            {
-                                {RPCResult::Type::ARR, "pubkeys", /*optional=*/true, "",
-                                {
-                                    {RPCResult::Type::STR_HEX, "keyid", "Public key ID, hash160 of the public key, of a public key whose BIP 32 derivation path is missing"},
-                                }},
-                                {RPCResult::Type::ARR, "signatures", /*optional=*/true, "",
-                                {
-                                    {RPCResult::Type::STR_HEX, "keyid", "Public key ID, hash160 of the public key, of a public key whose signature is missing"},
-                                }},
-                                {RPCResult::Type::STR_HEX, "redeemscript", /*optional=*/true, "Hash160 of the redeemScript that is missing"},
-                                {RPCResult::Type::STR_HEX, "witnessscript", /*optional=*/true, "SHA256 of the witnessScript that is missing"},
-                            }},
-                            {RPCResult::Type::STR, "next", /*optional=*/true, "Role of the next person that this input needs to go to"},
-                        }},
-                    }},
-                    {RPCResult::Type::NUM, "estimated_vsize", /*optional=*/true, "Estimated vsize of the final signed transaction"},
-                    {RPCResult::Type::STR_AMOUNT, "estimated_feerate", /*optional=*/true, "Estimated feerate of the final signed transaction in " + CURRENCY_UNIT + "/kvB. Shown only if all UTXO slots in the PSBT have been filled"},
-                    {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The transaction fee paid. Shown only if all UTXO slots in the PSBT have been filled"},
-                    {RPCResult::Type::STR, "next", "Role of the next person that this psbt needs to go to"},
-                    {RPCResult::Type::STR, "error", /*optional=*/true, "Error message (if there is one)"},
-                }
-            },
-            RPCExamples {
-                HelpExampleCli("analyzepsbt", "\"psbt\"")
-            },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    RPCTypeCheck(request.params, {UniValue::VSTR});
-
-    // Unserialize the transaction
-    PartiallySignedTransaction psbtx;
-    std::string error;
-    if (!DecodeBase64PSBT(psbtx, request.params[0].get_str(), error)) {
-        throw JSONRPCError(RPC_DESERIALIZATION_ERROR, strprintf("TX decode failed %s", error));
-    }
-
-    PSBTAnalysis psbta = AnalyzePSBT(psbtx);
-
-    UniValue result(UniValue::VOBJ);
-    UniValue inputs_result(UniValue::VARR);
-    for (const auto& input : psbta.inputs) {
-        UniValue input_univ(UniValue::VOBJ);
-        UniValue missing(UniValue::VOBJ);
-
-        input_univ.pushKV("has_utxo", input.has_utxo);
-        input_univ.pushKV("is_final", input.is_final);
-        input_univ.pushKV("next", PSBTRoleName(input.next));
-
-        if (!input.missing_pubkeys.empty()) {
-            UniValue missing_pubkeys_univ(UniValue::VARR);
-            for (const CKeyID& pubkey : input.missing_pubkeys) {
-                missing_pubkeys_univ.push_back(HexStr(pubkey));
-            }
-            missing.pushKV("pubkeys", missing_pubkeys_univ);
-        }
-        if (!input.missing_redeem_script.IsNull()) {
             missing.pushKV("redeemscript", HexStr(input.missing_redeem_script));
         }
         if (!input.missing_witness_script.IsNull()) {
@@ -1934,6 +1926,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &decoderawtransaction},
         {"rawtransactions", &compressrawtransaction},
         {"rawtransactions", &decompressrawtransaction},
+        {"rawtransactions", &testcompressrawtransaction},
         {"rawtransactions", &decodescript},
         {"rawtransactions", &combinerawtransaction},
         {"rawtransactions", &signrawtransactionwithkey},

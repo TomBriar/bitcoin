@@ -9,6 +9,8 @@
 #include <string>
 #include <optional>
 #include <node/blockstorage.h>
+#include <node/transaction.h>
+using node::GetTransaction;
 
 struct bilingual_str;
 class FillableSigningProvider;
@@ -42,20 +44,42 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
 /** Create a transaction from univalue parameters */
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf);
 
-/**
- * Compress a Transaction to a hex encoded string
- *
- * @param  mtx           The transaction to be compressed
- * @param  result        The compressed, serilized, hex encoded transaction
- */
-void CompressRawTransaction(CMutableTransaction& mtx, Chainstate& active_chainstate, std::string& transaction_result, std::string& result);
+long int binary_to_long_int(std::string binary);
 
-/**
- * Decompress a compressed transaction encoded as a hex string
- *
- * @param  mtx           The compressed, serilized, hex encoded transaction
- * @param  result        The decompressed transaction
- */
-void DecompressRawTransaction(const std::string hex, Chainstate& active_chainstate, CMutableTransaction& transaction_result, std::string& result);
+int32_t binary_to_int(std::string binary);
+
+std::string binary_to_hex(std::string binary);
+
+std::string int_to_hex(int32_t byte);
+
+int32_t char_to_int(char hex_byte);
+
+std::string bytes_to_hex(std::vector<unsigned char> bytes, int trim = 0);
+
+int32_t hex_to_int(std::string hex);
+
+unsigned char hex_to_char(std::string hex);
+
+std::vector<unsigned char> hex_to_bytes(std::string hex);
+
+std::string hex_to_binary(std::string hex);
+
+std::string to_varint(long int intager);
+
+std::tuple<long int, long int> from_varint(std::string hex);
+
+std::tuple<int, std::vector<unsigned char>> test_ecdsa_sig(std::vector<unsigned char> vchRet, std::string& result);
+
+std::tuple<std::string, std::vector<unsigned char>> get_input_type(CTxIn input, std::string& result);
+
+std::string serialize_script(CScript script);
+
+int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
+
+std::tuple<std::string, std::vector<unsigned char>> get_output_type(CTxOut output, std::string& result);
+
+
+
+
 
 #endif // BITCOIN_RPC_RAWTRANSACTION_UTIL_H
