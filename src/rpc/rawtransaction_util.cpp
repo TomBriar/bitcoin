@@ -379,7 +379,7 @@ void SignTransactionResultToJSON(CMutableTransaction& mtx, bool complete, const 
     }
 }
 
-static long int binary_to_long_int(std::string binary)
+long int binary_to_long_int(std::string binary)
 {
     long int i_byte = 0;
     int length = binary.length();
@@ -391,7 +391,7 @@ static long int binary_to_long_int(std::string binary)
     return i_byte;
 }
 
-static int32_t binary_to_int(std::string binary)
+int32_t binary_to_int(std::string binary)
 {
     int i_byte = 0;
     int length = binary.length();
@@ -403,7 +403,7 @@ static int32_t binary_to_int(std::string binary)
     return i_byte;
 }
 
-static std::string binary_to_hex(std::string binary)
+std::string binary_to_hex(std::string binary)
 {
     std::string hex, temphex;
     int byte, length;
@@ -423,7 +423,7 @@ static std::string binary_to_hex(std::string binary)
     return hex;
 }
 
-static std::string int_to_hex(int32_t byte)
+std::string int_to_hex(int32_t byte)
 {
     std::string hex;
     std::stringstream stream;
@@ -435,7 +435,7 @@ static std::string int_to_hex(int32_t byte)
     return hex;
 }
 
-static int32_t char_to_int(char hex_byte) 
+int32_t char_to_int(char hex_byte) 
 {
     switch(hex_byte)
         {
@@ -465,7 +465,7 @@ static int32_t char_to_int(char hex_byte)
     exit(1);
 }
 
-static std::string bytes_to_hex(std::vector<unsigned char> bytes, int trim = 0) {
+std::string bytes_to_hex(std::vector<unsigned char> bytes, int trim) {
     std::string r;
     int index, length, byte;
     if (!trim) {
@@ -489,7 +489,7 @@ static std::string bytes_to_hex(std::vector<unsigned char> bytes, int trim = 0) 
 //     return r; 
 // }
 
-static int32_t hex_to_int(std::string hex)
+int32_t hex_to_int(std::string hex)
 {
     int byte; 
     int r = 0;
@@ -501,14 +501,14 @@ static int32_t hex_to_int(std::string hex)
     return r;
 }
 
-static unsigned char hex_to_char(std::string hex)
+unsigned char hex_to_char(std::string hex)
 {
     int intager = hex_to_int(hex);
     unsigned char r = intager;
     return r; 
 }
 
-static std::vector<unsigned char> hex_to_bytes(std::string hex) {
+std::vector<unsigned char> hex_to_bytes(std::string hex) {
     int index, length;
     unsigned char byte;
     std::vector<unsigned char> r;
@@ -522,14 +522,14 @@ static std::vector<unsigned char> hex_to_bytes(std::string hex) {
 
 
 
-static std::string hex_to_binary(std::string hex)
+std::string hex_to_binary(std::string hex)
 {
     assert(hex.length() == 2);
     int byte = hex_to_int(hex);
     return std::bitset<8>(byte).to_string();
 }
 
-static std::string to_varint(long int intager)
+std::string to_varint(long int intager)
 {
     int i, varlen, padding, index;
     float fint;
@@ -573,7 +573,7 @@ static std::string to_varint(long int intager)
 }
 
 
-static std::tuple<long int, long int> from_varint(std::string hex) 
+std::tuple<long int, long int> from_varint(std::string hex) 
 {
     std::string hex_byte, binary, r;
     int byte, index;
@@ -599,7 +599,7 @@ static std::tuple<long int, long int> from_varint(std::string hex)
     return std::make_tuple(amount, index);
 }
 
-static std::tuple<int, std::vector<unsigned char>> test_ecdsa_sig(std::vector<unsigned char> vchRet, std::string& result)
+std::tuple<int, std::vector<unsigned char>> test_ecdsa_sig(std::vector<unsigned char> vchRet, std::string& result)
 {
     secp256k1_ecdsa_signature sig;
     secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
@@ -625,7 +625,7 @@ static std::tuple<int, std::vector<unsigned char>> test_ecdsa_sig(std::vector<un
     return std::make_tuple(0, vchRet);
 }
 
-static std::string serialize_script(CScript script) 
+std::string serialize_script(CScript script) 
 {
     std::vector<unsigned char> vchRet;
     opcodetype opcodeRet;
@@ -646,7 +646,7 @@ static std::string serialize_script(CScript script)
 }
 
 // TODO return 0 or 1 based on success
-static int get_first_push_bytes(std::vector<unsigned char>& data, CScript script) 
+int get_first_push_bytes(std::vector<unsigned char>& data, CScript script) 
 {
     std::vector<unsigned char> vchRet;
     opcodetype opcodeRet;
@@ -674,7 +674,7 @@ static int get_first_push_bytes(std::vector<unsigned char>& data, CScript script
     "110": P2TR.
     "111": Custom Script.
 */
-static std::tuple<std::string, std::vector<unsigned char>> get_output_type(CTxOut output, std::string& result)
+std::tuple<std::string, std::vector<unsigned char>> get_output_type(CTxOut output, std::string& result)
 {
     std::vector<std::vector<unsigned char>> push_bytes;
     CScript script_pubkey = output.scriptPubKey;

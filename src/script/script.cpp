@@ -207,6 +207,14 @@ bool CScript::IsPayToScriptHash() const
             (*this)[22] == OP_EQUAL);
 }
 
+bool CScript::IsPayToTaproot() const
+{
+    // Test for pay-to-taproot CScripts:
+    return (this->size() == 34 &&
+            (*this)[0] == OP_1 &&
+            (*this)[1] == 0x20);
+}
+
 bool CScript::IsPayToWitnessScriptHash() const
 {
     // Extra-fast test for pay-to-witness-script-hash CScripts:

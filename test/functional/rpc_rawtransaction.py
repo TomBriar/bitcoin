@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2021 The Bitcoin Core developers
+# Copyright (c) 2014-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the rawtransaction RPCs.
@@ -10,11 +10,12 @@ Test the following RPCs:
    - signrawtransactionwithwallet
    - sendrawtransaction
    - decoderawtransaction
-   # - compressrawtransaction
+   - compressrawtransaction
 """
 
 from collections import OrderedDict
 from decimal import Decimal
+from itertools import product
 
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.messages import (
@@ -82,6 +83,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.generate(self.nodes[0], COINBASE_MATURITY + 1)
 
         self.getrawtransaction_tests()
+        self.getrawtransaction_verbosity_tests()
         self.createrawtransaction_tests()
         self.sendrawtransaction_tests()
         self.sendrawtransaction_testmempoolaccept_tests()
@@ -118,6 +120,7 @@ class RawTransactionsTest(BitcoinTestFramework):
                 # 4. valid parameters - supply txid and 1 for verbose.
                 # We only check the "hex" field of the output so we don't need to update this test every time the output format changes.
                 assert_equal(self.nodes[n].getrawtransaction(txId, 1)["hex"], tx['hex'])
+                assert_equal(self.nodes[n].getrawtransaction(txId, 2)["hex"], tx['hex'])
 
                 # 5. valid parameters - supply txid and True for non-verbose
                 assert_equal(self.nodes[n].getrawtransaction(txId, True)["hex"], tx['hex'])
@@ -128,13 +131,14 @@ class RawTransactionsTest(BitcoinTestFramework):
 
             # 6. invalid parameters - supply txid and invalid boolean values (strings) for verbose
             for value in ["True", "False"]:
-                assert_raises_rpc_error(-3, "not of expected type bool", self.nodes[n].getrawtransaction, txid=txId, verbose=value)
+                assert_raises_rpc_error(-3, "not of expected type number", self.nodes[n].getrawtransaction, txid=txId, verbose=value)
+                assert_raises_rpc_error(-3, "not of expected type number", self.nodes[n].getrawtransaction, txid=txId, verbosity=value)
 
             # 7. invalid parameters - supply txid and empty array
-            assert_raises_rpc_error(-3, "not of expected type bool", self.nodes[n].getrawtransaction, txId, [])
+            assert_raises_rpc_error(-3, "not of expected type number", self.nodes[n].getrawtransaction, txId, [])
 
             # 8. invalid parameters - supply txid and empty dict
-            assert_raises_rpc_error(-3, "not of expected type bool", self.nodes[n].getrawtransaction, txId, {})
+            assert_raises_rpc_error(-3, "not of expected type number", self.nodes[n].getrawtransaction, txId, {})
 
         # Make a tx by sending, then generate 2 blocks; block1 has the tx in it
         tx = self.wallet.send_self_transfer(from_node=self.nodes[2])['txid']
@@ -147,9 +151,10 @@ class RawTransactionsTest(BitcoinTestFramework):
             assert_equal(gottx['in_active_chain'], True)
             if n == 0:
                 self.log.info("Test getrawtransaction with -txindex, without blockhash: 'in_active_chain' should be absent")
-                gottx = self.nodes[n].getrawtransaction(txid=tx, verbose=True)
-                assert_equal(gottx['txid'], tx)
-                assert 'in_active_chain' not in gottx
+                for v in [1,2]:
+                    gottx = self.nodes[n].getrawtransaction(txid=tx, verbosity=v)
+                    assert_equal(gottx['txid'], tx)
+                    assert 'in_active_chain' not in gottx
             else:
                 self.log.info("Test getrawtransaction without -txindex, without blockhash: expect the call to raise")
                 assert_raises_rpc_error(-5, err_msg, self.nodes[n].getrawtransaction, txid=tx, verbose=True)
@@ -173,6 +178,70 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test getrawtransaction on genesis block coinbase returns an error")
         block = self.nodes[0].getblock(self.nodes[0].getblockhash(0))
         assert_raises_rpc_error(-5, "The genesis block coinbase is not considered an ordinary transaction", self.nodes[0].getrawtransaction, block['merkleroot'])
+
+    def getrawtransaction_verbosity_tests(self):
+        tx = self.wallet.send_self_transfer(from_node=self.nodes[1])['txid']
+        [block1] = self.generate(self.nodes[1], 1)
+        fields = [
+            'blockhash',
+            'blocktime',
+            'confirmations',
+            'hash',
+            'hex',
+            'in_active_chain',
+            'locktime',
+            'size',
+            'time',
+            'txid',
+            'vin',
+            'vout',
+            'vsize',
+            'weight',
+        ]
+        prevout_fields = [
+            'generated',
+            'height',
+            'value',
+            'scriptPubKey',
+        ]
+        script_pub_key_fields = [
+            'address',
+            'asm',
+            'hex',
+            'type',
+        ]
+        # node 0 & 2 with verbosity 1 & 2
+        for n, v in product([0, 2], [1, 2]):
+            self.log.info(f"Test getrawtransaction_verbosity {v} {'with' if n == 0 else 'without'} -txindex, with blockhash")
+            gottx = self.nodes[n].getrawtransaction(txid=tx, verbosity=v, blockhash=block1)
+            missing_fields = set(fields).difference(gottx.keys())
+            if missing_fields:
+                raise AssertionError(f"fields {', '.join(missing_fields)} are not in transaction")
+
+            assert(len(gottx['vin']) > 0)
+            if v == 1:
+                assert('fee' not in gottx)
+                assert('prevout' not in gottx['vin'][0])
+            if v == 2:
+                assert(isinstance(gottx['fee'], Decimal))
+                assert('prevout' in gottx['vin'][0])
+                prevout = gottx['vin'][0]['prevout']
+                script_pub_key = prevout['scriptPubKey']
+
+                missing_fields = set(prevout_fields).difference(prevout.keys())
+                if missing_fields:
+                    raise AssertionError(f"fields {', '.join(missing_fields)} are not in transaction")
+
+                missing_fields = set(script_pub_key_fields).difference(script_pub_key.keys())
+                if missing_fields:
+                    raise AssertionError(f"fields {', '.join(missing_fields)} are not in transaction")
+
+        # check verbosity 2 without blockhash but with txindex
+        assert('fee' in self.nodes[0].getrawtransaction(txid=tx, verbosity=2))
+        # check that coinbase has no fee or does not throw any errors for verbosity 2
+        coin_base = self.nodes[1].getblock(block1)['tx'][0]
+        gottx = self.nodes[1].getrawtransaction(txid=coin_base, verbosity=2, blockhash=block1)
+        assert('fee' not in gottx)
 
     def createrawtransaction_tests(self):
         self.log.info("Test createrawtransaction")
@@ -332,15 +401,18 @@ class RawTransactionsTest(BitcoinTestFramework):
 
     def compressrawtransaction_tests(self):
         self.log.info("Test compressrawtransaction")
-        # input P2PKH output P2PKH x2 transaction
-        targettx = "46b307e16b262c8f3fef7f2c05a50663adb654cb6d79c3c35dcecf18edf430a547f2016a473044022053b6408b029763290493653cdfd7775249735a349c5f2d23042972324e3399c0022009fcd2a8598b390afdabfbf8782e6f9cdfc86a9e9ce4ca77369ef28b85970967012102195646c22ab419c14599106960cc8587266cc0ad2189861c44c5eb3dfa771d3c0081f9d9718b642cedc29a94a581a8800509ba0815dc1eb297b1b2fc087452552d6ca38bbfc20f3d95dd3dbb4849a33f7d"
-        tx = "0100000001f247a530f4ed18cfce5dc3c3796dcb54b6ad6306a5052c7fef3f8f2c266be107010000006a473044022053b6408b029763290493653cdfd7775249735a349c5f2d23042972324e3399c0022009fcd2a8598b390afdabfbf8782e6f9cdfc86a9e9ce4ca77369ef28b85970967012102195646c22ab419c14599106960cc8587266cc0ad2189861c44c5eb3dfa771d3cffffffff02f16c3e00000000001976a9148b642cedc29a94a581a8800509ba0815dc1eb29788ac08be2c06000000001976a9147452552d6ca38bbfc20f3d95dd3dbb4849a33f7d88ac00000000"
-        print(targettx)
+        self.wallet.send_self_transfer(from_node=self.nodes[0])["hex"]
+        self.generate(self.nodes[0], 1)
+        tx = self.wallet.send_self_transfer(from_node=self.nodes[0])["hex"]
+        self.generate(self.nodes[0], 1)
+        self.log.info("test = "+tx)
+        # witness transaction
+        # tx = "010000000001010000000000000072c1a6a246ae63f74f931e8365e15a089c68d61900000000000000000000ffffffff0100e1f50500000000000102616100000000"
         compressed_transaction = self.nodes[0].compressrawtransaction(tx)
-        print(compressed_transaction)
-        print(targettx)
-        # assert_equal(compressed_transaction, targettx)
-        # assert_raises_rpc_error(-22, 'TX compress failed', self.nodes[0].compressrawtransaction, encrawtx, False)  # fails to decode as non-witness transaction
+        self.log.info("Compressed_Transaction =	"+compressed_transaction)
+        # decompressed_transaction = self.node[0].decompressrawtransaction(compressed_transaction)
+        # self.log.info("Decompressed_Transaction = "+decompressed_transaction)
+        # assert_equal(tx, decompressed_transaction)
 
     def transaction_version_number_tests(self):
         self.log.info("Test transaction version numbers")

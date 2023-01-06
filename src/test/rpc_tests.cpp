@@ -133,11 +133,6 @@ BOOST_AUTO_TEST_CASE(rpc_rawparams)
     BOOST_CHECK_NO_THROW(r = CallRPC(std::string("decoderawtransaction ")+rawtx+" false"));
     BOOST_CHECK_THROW(r = CallRPC(std::string("decoderawtransaction ")+rawtx+" false extra"), std::runtime_error);
 
-    // BOOST_CHECK_THROW(CallRPC("compressrawtransaction"), std::runtime_error);
-    // BOOST_CHECK_THROW(CallRPC("compressrawtransaction null"), std::runtime_error);
-    // BOOST_CHECK_THROW(CallRPC("compressrawtransaction DEADBEEF"), std::runtime_error);
-    BOOST_CHECK_NO_THROW(r = CallRPC(std::string("compressrawtransaction ")+rawtx));
-
     // Only check failure cases for sendrawtransaction, there's no network to send to...
     BOOST_CHECK_THROW(CallRPC("sendrawtransaction"), std::runtime_error);
     BOOST_CHECK_THROW(CallRPC("sendrawtransaction null"), std::runtime_error);
