@@ -606,18 +606,14 @@ std::tuple<int, std::vector<unsigned char>> test_ecdsa_sig(std::vector<unsigned 
     unsigned char hash_type;
     int r, length;
     
-    result += "test = "+bytes_to_hex(vchRet)+"\n";
+    result += "testing sig = "+bytes_to_hex(vchRet)+"\n";
     hash_type = vchRet.back();
-    result += "vchRet.size() = "+std::to_string(vchRet.size())+"\n";
     length = vchRet.size()-1;
     r = secp256k1_ecdsa_signature_parse_der(ctx, &sig, &vchRet[0], length);
-    result += "Witness ECDSA Sig parsed = "+std::to_string(r)+"\n";
     if (r) {
         r = secp256k1_ecdsa_signature_serialize_compact(ctx, &vchRet[0], &sig);
-        result += "Witness ECDSA Sig Compressed = "+std::to_string(r)+"\n";
         if (r) {
             r = secp256k1_ecdsa_signature_parse_compact(ctx, &sig, &vchRet[0]);
-            result += "Re deserilize = "+std::to_string(r)+"\n";
             vchRet[64] = hash_type;
             return std::make_tuple(1, vchRet);
         }

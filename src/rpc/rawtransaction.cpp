@@ -459,7 +459,7 @@ std::tuple<std::string, std::vector<unsigned char>> get_input_type(CTxIn input, 
     if (!input.scriptWitness.IsNull() && input.scriptSig.GetSigOpCount(true) == 0) {
         length = input.scriptWitness.stack.size();
         if (length == 1 && scriptPubKey.IsPayToTaproot()) {
-            result += "TAPROOT\n";
+            result += "get_input_type =	TAPROOT\n";
             return std::make_tuple("11", input.scriptWitness.stack.at(0));
         } else if (length == 2) {
             /* If the Witness has two entries and the first is an ECDSA Sginature then Input Type is Segwit */
@@ -487,7 +487,7 @@ std::tuple<std::string, std::vector<unsigned char>> get_input_type(CTxIn input, 
         r = std::get<0>(test_ecdsa_result);
         if (r) {
             vchRet = std::get<1>(test_ecdsa_result);
-			result += "get_input_type = Legacy\n";
+			result += "get_input_type = LEGACY\n";
             return std::make_tuple("01", vchRet);
         }
     }
@@ -516,6 +516,7 @@ static RPCHelpMan compressrawtransaction()
 
             CMutableTransaction mtx, rmtx;
             std::string result, transaction_result;
+			std::vector<unsigned char> transaction_result_bytes;
 
             if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
@@ -527,41 +528,31 @@ static RPCHelpMan compressrawtransaction()
             active_chainstate.ForceFlushStateToDisk();
 			BlockManager* blockman = &active_chainstate.m_blockman;
 
-			/* Misc. Variables */
-			int limit, block_height, block_index;
-			Consensus::Params consensus_params;
-			const CBlockIndex* pindex{nullptr};
-			std::vector<unsigned char> bytes;
-			std::string hex, hex2, hex3, binary;
-			CTransactionRef tr;
-			uint256 hash;
-			CBlock block;
-			uint256 txid;
-
+			unsigned char info_byte_test = 0;
+			
 			/* Encode Version
 				Encode the version as binary if its less then 4, Otherwise we'll encode the version as a VarInt later. 
 			*/
-			std::string version_bits;
+			//std::string version_bits;
 			switch(mtx.nVersion)
 			{
 				case 1: 
 				{
-					version_bits = "01";
+					info_byte_test += 1 << 1;
+					//version_bits = "01";
 					break;
 				};
 				case 2: 
 				{
-					version_bits = "10";
+					info_byte_test += 1 << 0;
+					//version_bits = "10";
 					break;
 				};
 				case 3: 
 				{
-					version_bits = "11";
-					break;
-				};
-				default: 
-				{
-					version_bits = "00";
+					info_byte_test += 1 << 0;
+					info_byte_test += 1 << 1;
+					//version_bits = "11";
 					break;
 				};
 			}
@@ -588,27 +579,26 @@ static RPCHelpMan compressrawtransaction()
 			/* Encode Input Count
 				Encode the Input Count as binary if its less then 4, Otherwise we'll encode the Input Count as a VarInt later. 
 			*/
-			std::string input_count_bits;
+			//std::string input_count_bits;
 			switch(mtx.vin.size())
 			{
 				case 1:
 				{
-					input_count_bits = "01";
+					info_byte_test += 1 << 3;
+					//input_count_bits = "01";
 					break;
 				}
 				case 2:
 				{
-					input_count_bits = "10";
+					info_byte_test += 1 << 2;
+					//input_count_bits = "10";
 					break;
 				}
 				case 3:
 				{
-					input_count_bits = "11";
-					break;
-				}
-				default:
-				{
-					input_count_bits = "00";
+					info_byte_test += 1 << 2;
+					info_byte_test += 1 << 3;
+					//input_count_bits = "11";
 					break;
 				}
 			}
@@ -621,22 +611,21 @@ static RPCHelpMan compressrawtransaction()
 			{
 				case 1:
 				{
-					output_count_bits = "01";
+					info_byte_test += 1 << 5;
+					//output_count_bits = "01";
 					break;
 				}
 				case 2:
 				{
-					output_count_bits = "10";
+					info_byte_test += 1 << 4;
+					//output_count_bits = "10";
 					break;
 				}
 				case 3:
 				{
-					output_count_bits = "11";
-					break;
-				}
-				default:
-				{
-					output_count_bits = "00";
+					info_byte_test += 1 << 4;
+					info_byte_test += 1 << 5;
+					//output_count_bits = "11";
 					break;
 				}
 			}
@@ -726,7 +715,7 @@ static RPCHelpMan compressrawtransaction()
 			result += "Info Byte = "+info_byte+"\n";
 
 			/* Push the Info Byte to the Result */
-			hex = binary_to_hex(info_byte);
+			std::string hex = binary_to_hex(info_byte);
 			result += "Info Byte Hex = "+hex+"\n";
 			std::string compressed_transaction = hex;
 
@@ -745,8 +734,8 @@ static RPCHelpMan compressrawtransaction()
 				If the locktime was not zero and this is a coinbase transaction, encode the LockTime as a VarInt. 
 			*/
 			if (locktime_bits == "01") {
-				limit = pow(2, 16);
-				binary = std::bitset<16>(mtx.nLockTime % limit).to_string();
+				int limit = pow(2, 16);
+				std::string binary = std::bitset<16>(mtx.nLockTime % limit).to_string();
 				/* Push the Shortend Locktime Bytes */
 				hex = binary_to_hex(binary);
 				result += "Shortend Locktime Hex = "+hex+"\n";
@@ -911,7 +900,7 @@ static RPCHelpMan compressrawtransaction()
 				result += "Sequence VarInt Hex = "+hex+"\n";
 				compressed_transaction += hex;
 			} else if (sequence_bits == "010") {
-				binary = "";
+				std::string binary = "";
 				int sequence_length = sequences.size();
 				for (int sequence_index = 0; sequence_index < sequence_length; sequence_index++) {
 					switch(sequences.at(sequence_index))
@@ -957,7 +946,7 @@ static RPCHelpMan compressrawtransaction()
 				"01": Non Identical Input Types, Less then 4 Inputs, Encode as a Singe Byte
 			*/
 			if (input_type_bits == "01") {
-				binary = "";
+				std::string binary = "";
 				int input_length = inputs.size();
 				for (int input_index = 0; input_index < input_length; input_index++) {
 					std::tuple<std::string, std::vector<unsigned char>> input_result = inputs.at(input_index);
@@ -1020,46 +1009,50 @@ static RPCHelpMan compressrawtransaction()
 					result += "Input Type Hex = "+hex+"\n";
 					compressed_transaction += hex;
 				} 
-
 				if (!coinbase) {
 					/* Encode TXID Block Index/Height 
 						If Not CoinBase: Encode TXID as its Block Index/Height
 					*/
-					tr = GetTransaction(nullptr, nullptr, mtx.vin.at(input_index).prevout.hash, consensus_params, hash);
+					Consensus::Params consensus_params;
+					uint256 hash;
+					CTransactionRef tr = GetTransaction(nullptr, nullptr, mtx.vin.at(input_index).prevout.hash, consensus_params, hash);
+					uint256 txid;
 					txid = (*tr).GetHash();
 					std::vector<std::shared_ptr<const CTransaction>>::iterator itr;
-					{
-						// const uint256& conhash = mtx.vin.at(index).prevout.hash;
-						pindex = blockman->LookupBlockIndex(hash);
-						block_height = pindex->nHeight;
-						result += "Block Hash = "+pindex->GetBlockHash().GetHex()+"\n";
-						ReadBlockFromDisk(block, pindex, consensus_params);
-						int blocks_length = block.vtx.size();
-						for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
-							if ((*block.vtx.at(blocks_index)).GetHash() == txid) {
-								block_index = blocks_index;
-							}
+					const CBlockIndex* pindex{nullptr};
+					pindex = blockman->LookupBlockIndex(hash);
+					int block_height = pindex->nHeight;
+					result += "Block Hash = "+pindex->GetBlockHash().GetHex()+"\n";
+					CBlock block;
+					ReadBlockFromDisk(block, pindex, consensus_params);
+					bool txid_found = false;
+					int blocks_length = block.vtx.size();
+					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
+						if ((*block.vtx.at(blocks_index)).GetHash() == txid) {
+							txid_found = true;
+							int block_index = blocks_index;
+
+							/* Push Block Height */
+							hex = to_varint(block_height);
+							result += "Block Height Hex = "+hex+"\n";
+							result += "Block Height = "+std::to_string(block_height)+"\n";
+							compressed_transaction += hex;
+
+							/* Push Block Index */
+							hex = to_varint(block_index);
+							result += "Block Index Hex = "+hex+"\n";
+							result += "Block Index = "+std::to_string(block_index)+"\n";
+							compressed_transaction += hex;
+							break;
 						}
 					}
 					/* Encode TXID 
 						If Block Index/Height Was Found: Encode TXID as its Block Index/Height
 					*/
-					if (block_index) {
+					if (!txid_found) {
 						/* Push the TXID */
 						hex = mtx.vin.at(input_index).prevout.hash.GetHex();
 						result += "Full TXID hex = "+hex+"\n";
-						compressed_transaction += hex;
-					} else {
-						/* Push Block Height */
-						hex = to_varint(block_height);
-						result += "Block Height Hex = "+hex+"\n";
-						result += "Block Height = "+std::to_string(block_height)+"\n";
-						compressed_transaction += hex;
-
-						/* Push Block Index */
-						hex = to_varint(block_index);
-						result += "Block Index Hex = "+hex+"\n";
-						result += "Block Index = "+std::to_string(block_index)+"\n";
 						compressed_transaction += hex;
 					}
 
@@ -1077,7 +1070,7 @@ static RPCHelpMan compressrawtransaction()
 				if (input_type == "00") {
 					hex = serialize_script(mtx.vin.at(input_index).scriptSig);
 					int script_length = hex.length()/2;
-					hex2 = to_varint(script_length);
+					std::string hex2 = to_varint(script_length);
 					result += "Script Length = "+std::to_string(script_length)+"\n";
 					result += "Script Length Hex = "+hex2+"\n";
 					result += "Script = "+hex+"\n";
@@ -1114,18 +1107,19 @@ static RPCHelpMan compressrawtransaction()
 				} else {
 					result += "LEGACY/SEGWIT/TAPROOT\n";
 					std::tuple<std::string, std::vector<unsigned char>> input_result = inputs.at(input_index);
+					std::vector<unsigned char> bytes;
 					bytes = std::get<1>(input_result);
 					hex = bytes_to_hex(bytes);
 
 					/* Push Compressed Signature */
-					hex2 = hex.substr(0, 128);
+					std::string hex2 = hex.substr(0, 128);
 					result += "Compressed Signature = "+hex2+"\n";
 					compressed_transaction += hex2;
 
 					/* Push Signature Hash Type */
-					hex3 = hex.substr(128, 2);
+					std::string hex3 = hex.substr(128, 2);
 					if (hex3 == "") {
-						hex3 = "01";
+						hex3 = "00";
 					}
 					result += "Signature Hash Type = "+hex3+"\n";
 					compressed_transaction += hex3;
@@ -1165,7 +1159,7 @@ static RPCHelpMan compressrawtransaction()
 					result += "Script Length = "+std::to_string(script_length)+"\n";
 
 					/* Push Script Length */
-					hex2 = int_to_hex(script_length);
+					std::string hex2 = int_to_hex(script_length);
 					result += "Script Length Hex = "+hex2+"\n";
 					compressed_transaction += hex2;
 
@@ -1220,83 +1214,10 @@ static RPCHelpMan decompressrawtransaction()
 			result += "---------------------------------------------------\n";
 			result += "compressed transaction = "+compressed_transaction+"\n";
 
-			 /* Info Byte */
-			std::string info_byte;
-
-			/* Info bits */
-			std::string version_bits;
-			std::string locktime_bits;
-			std::string input_count_bits;
-			std::string output_count_bits;
-
-			/* Input Ouput Byte */
-			std::string io_byte;
-
-			/* Input Output bits */
-			std::string sequence_bits;
-			std::string input_type_bits;
-			std::string output_type_bits;
-
-			/* Coinbase Byte */
-			std::string cb_btye;
-
-			/* Coinbase bits */
-			std::string coinbase_bits;
-
-			/* Transaction Types */
-			int input_count, output_count, vout_int, block_index, block_height;
-			std::tuple<std::string, std::vector<unsigned char>> output_result;
-			std::vector<std::string> compressed_signatures, input_types;
-			std::vector<int> half_finished_inputs, hash_types;
-			std::string input_type, output_type, script_type;
-			std::vector<std::vector<unsigned char>> stack;
-			Consensus::Params consensusParams;
-			CScript scriptSig, output_script;
-			std::vector<uint32_t> sequences;
-			CScriptWitness scriptWitness;
-			std::vector<CTxOut> vout;
-			uint256 txid, block_hash;
-			std::vector<CTxIn> vin;
-			bool locktime_found;
-			COutPoint outpoint;
-			uint32_t sequence;
-			CAmount amount;
-			bool coinbase;
-			CTxIn ctxin;
-
-			/* Misc. Variables */
-			int byte, height, r;
-			std::tuple<long int, int32_t> varint_result;
-			std::vector<unsigned char> compact_signature;
-			CScript c_script_pubkey, uc_script_pubkey;
-			std::string hex, hex2, hex3, binary;
-			Consensus::Params consensus_params;
-			const CBlockIndex* pindex{nullptr};
-			std::vector<CBlockIndex*> blocks;
-			std::vector<unsigned char> bytes;
-			CTransactionRef tr;
-			bool pubkey_found;
-			uint256 hash;
-			CBlock block;
-
-			/* Secp Variables */
-			std::vector<secp256k1_ecdsa_recoverable_signature> recovered_signatures;
-			std::vector<unsigned char> public_key_bytes;
-			secp256k1_ecdsa_recoverable_signature rsig;
-			std::vector<secp256k1_pubkey> pubkeys;
-			secp256k1_ecdsa_signature sig;
-			secp256k1_pubkey pubkey;
-
-			/* Secp Context */
-			 secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-
-			/* Indexs and Lengths */
-			int input_index, input_type_index, blocks_index, witnesses_index, output_index, partial_inputs_index, recovery_index, pubkeys_index, recovered_signatures_index, input_index_2, pubkey_length;
-			int input_length, blocks_length, witness_count, witness_script_length, script_length, partial_inputs_length, pubkeys_length, recovered_signatures_length;
-
 			/* Init Vars */
+			secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
 			int transaction_index = 0;
-			locktime_found = true;
+			bool locktime_found = true;
 
 			/* Parse Info Byte 
 				"xx": Version Encoding
@@ -1304,20 +1225,20 @@ static RPCHelpMan decompressrawtransaction()
 				"xx: Input Count
 				"xx": Output Count
 			*/
-			hex = compressed_transaction.substr(transaction_index, 2);
+			std::string hex = compressed_transaction.substr(transaction_index, 2);
 			transaction_index += 2;
-			info_byte = hex_to_binary(hex);
+			std::string info_byte = hex_to_binary(hex);
 
-			version_bits = info_byte.substr(0, 2);
+			std::string version_bits = info_byte.substr(0, 2);
 			result += "version_bits = "+version_bits+"\n";
 
-			locktime_bits = info_byte.substr(2, 2);
+			std::string locktime_bits = info_byte.substr(2, 2);
 			result += "locktime_bits = "+locktime_bits+"\n";
 
-			input_count_bits = info_byte.substr(4, 2);
+			std::string input_count_bits = info_byte.substr(4, 2);
 			result += "input_count_bits = "+input_count_bits+"\n";
 
-			output_count_bits = info_byte.substr(6, 2);
+			std::string output_count_bits = info_byte.substr(6, 2);
 			result += "output_count_bits = "+output_count_bits+"\n";
 
 			result += "Info Byte = "+info_byte+"\n";
@@ -1329,7 +1250,7 @@ static RPCHelpMan decompressrawtransaction()
 				_: Parse Binary of version_bits for version
 			*/
 			if (version_bits == "00") {
-				varint_result = from_varint(compressed_transaction.substr(transaction_index));
+				std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 				mtx.nVersion = std::get<0>(varint_result);
 				transaction_index += std::get<1>(varint_result);
 				result += "Version Hex Length = "+std::to_string(std::get<1>(varint_result))+"\n";
@@ -1352,7 +1273,7 @@ static RPCHelpMan decompressrawtransaction()
 				transaction_index += 4;
 				result += "Shortend LockTime Hex = "+hex+"\n";
 			} else if (locktime_bits == "11") {
-				varint_result = from_varint(compressed_transaction.substr(transaction_index));
+				std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 				mtx.nLockTime = std::get<0>(varint_result);
 				transaction_index += std::get<1>(varint_result);
 				result += "VarInt LockTime Hex Length = "+std::to_string(std::get<1>(varint_result))+"\n";
@@ -1362,8 +1283,9 @@ static RPCHelpMan decompressrawtransaction()
 				"00": Parse a VarInt
 				_: Parse Binary of input_count_bits for Input Count
 			*/
+			int input_count;
 			if (input_count_bits == "00") {
-				varint_result = from_varint(compressed_transaction.substr(transaction_index));
+				std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 				input_count = std::get<0>(varint_result);
 				transaction_index += std::get<1>(varint_result);
 				result += "Input Count Hex Length = "+std::to_string(std::get<1>(varint_result))+"\n";
@@ -1376,8 +1298,9 @@ static RPCHelpMan decompressrawtransaction()
 				"00": Parse a VarInt
 				_: Parse Binary of output_count_bits for Output Count
 			*/
+			int output_count;
 			if (output_count_bits == "00") {
-				varint_result = from_varint(compressed_transaction.substr(transaction_index));
+				std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 				output_count = std::get<0>(varint_result);
 				transaction_index += std::get<1>(varint_result);
 				result += "Output Count Hex Length = "+std::to_string(std::get<1>(varint_result))+"\n";
@@ -1394,21 +1317,21 @@ static RPCHelpMan decompressrawtransaction()
 			*/
 			hex = compressed_transaction.substr(transaction_index, 2);
 			transaction_index += 2;
-			io_byte = hex_to_binary(hex);
+			std::string io_byte = hex_to_binary(hex);
 
-			sequence_bits = io_byte.substr(0, 3);
+			std::string sequence_bits = io_byte.substr(0, 3);
 			result += "sequence_bits = "+sequence_bits+"\n";
 
-			input_type_bits = io_byte.substr(3, 2);
+			std::string input_type_bits = io_byte.substr(3, 2);
 			result += "input_type_bits = "+input_type_bits+"\n";
 
-			output_type_bits = io_byte.substr(5, 3);
+			std::string output_type_bits = io_byte.substr(5, 3);
 			result += "output_type_bits = "+output_type_bits+"\n";
 
 			result += "Input Output Byte = "+io_byte+"\n";
 			result += "Input Output Byte Hex = "+hex+"\n";
 
-			byte = binary_to_int("00000"+sequence_bits);
+			int byte = binary_to_int("00000"+sequence_bits);
 
 			/* Parse Sequnce 
 				"000": Non Identical Sequences, Read Sequence Before Each Input
@@ -1416,6 +1339,9 @@ static RPCHelpMan decompressrawtransaction()
 				"010": Up to 4 Inputs had the Sequence Encoded in the Next Byte
 				"011"-"110": Sequence is Identical and encoded in the Sequnce Bits
 			*/ 
+			std::vector<uint32_t> sequences;
+			uint32_t sequence;
+			result += "byte = "+std::to_string(byte)+"\n";
 			switch(byte)
 			{
 				case 0:
@@ -1424,7 +1350,7 @@ static RPCHelpMan decompressrawtransaction()
 				}
 				case 1: 
 				{
-					varint_result = from_varint(compressed_transaction.substr(transaction_index));
+					std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 					sequence = std::get<0>(varint_result);
 					transaction_index += std::get<1>(varint_result);
 					break;
@@ -1434,8 +1360,8 @@ static RPCHelpMan decompressrawtransaction()
 					hex = compressed_transaction.substr(transaction_index, 2);
 					result += "Encoded Sequence Byte Hex = "+hex+"\n";
 					transaction_index += 2;
-					binary = hex_to_binary(hex);
-					for (input_index = 0; input_index < input_count; input_index++) {
+					std::string binary = hex_to_binary(hex);
+					for (int input_index = 0; input_index < input_count; input_index++) {
 						byte = binary_to_int("000000"+binary.substr(transaction_index, 2));
 						switch(byte)
 						{
@@ -1493,12 +1419,13 @@ static RPCHelpMan decompressrawtransaction()
 			/* Parse Input Type
 				"01": Up to 4 Input Types have been Encoded in the Next Byte
 			*/ 
+			std::vector<std::string> input_types;
 			if (input_type_bits == "01") {
 				hex = compressed_transaction.substr(transaction_index, 2);
 				result += "Encoded Input Type Byte Hex = "+hex+"\n";
-				binary = hex_to_binary(hex);
+				std::string binary = hex_to_binary(hex);
 				transaction_index += 2;
-				for (input_type_index = 0; input_type_index < 4; input_type_index++) {
+				for (int input_type_index = 0; input_type_index < 4; input_type_index++) {
 					result += "input_type("+std::to_string(input_type_index)+") = "+binary.substr(input_type_index, 2)+"\n";
 					input_types.push_back(binary.substr(input_type_index, 2));
 				}
@@ -1509,25 +1436,27 @@ static RPCHelpMan decompressrawtransaction()
 			*/
 			hex = compressed_transaction.substr(transaction_index, 2);
 			transaction_index += 2;
-			binary = hex_to_binary(hex);
+			std::string binary = hex_to_binary(hex);
 
-			coinbase_bits = binary.substr(0, 1);
+			std::string coinbase_bits = binary.substr(0, 1);
 			result += "coinbase_bits = "+coinbase_bits+"\n";
 
 			/* Parse Coinbase */
-			coinbase = binary_to_int("0000000"+coinbase_bits);
+			bool coinbase = binary_to_int("0000000"+coinbase_bits);
 
 			result += "^^^^^^^^^CB BYTE^^^^^^^^^^\n";
-			for (input_index = 0; input_index < input_count; input_index++) {
+		 	std::vector<int> half_finished_inputs, hash_types;
+			std::vector<std::string> compressed_signatures;
+			std::vector<CTxIn> vin;
+			for (int input_index = 0; input_index < input_count; input_index++) {
 				result += "---index = "+std::to_string(input_index)+"\n";
 				// Clear Stack From Previous Iterations
-				stack.clear();
 				/* Parse Sequence 
 					"000": Sequence was uncompressed, Read from VarInt
 					"010": Sequence was Read Previously, Set Temp Var
 				*/
 				if (sequence_bits == "000") {
-					varint_result = from_varint(compressed_transaction.substr(transaction_index));
+					std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 					sequence = std::get<0>(varint_result);
 					transaction_index += std::get<1>(varint_result);
 					result += "Sequence = "+std::to_string(sequence)+"\n";
@@ -1541,6 +1470,7 @@ static RPCHelpMan decompressrawtransaction()
 					"10": All Inputs Identical, Input is Custom Type
 					"11": All Inputs Identical, Input is Compressed
 				*/
+				std::string input_type;
 				byte = binary_to_int("000000"+input_type_bits);
 				switch(byte)
 				{
@@ -1567,33 +1497,41 @@ static RPCHelpMan decompressrawtransaction()
 						break;
 					}
 				}
+				int vout_int;
+				uint256 txid;
+				CScript scriptSig;
 				if (!coinbase) {
 					/* Parse TXID */
 					hex = compressed_transaction.substr(transaction_index, (32*2));
 					result += "TXID hex = "+hex+"\n";
 					txid.SetHex(hex);
 
-					tr = GetTransaction(nullptr, nullptr, txid, consensus_params, hash);
+					Consensus::Params consensus_params;
+					uint256 hash;
+					CTransactionRef tr = GetTransaction(nullptr, nullptr, txid, consensus_params, hash);
 
 					if (tr == nullptr) {
 						result += "FAILURE\n";
-						varint_result = from_varint(compressed_transaction.substr(transaction_index));
-						block_height = std::get<0>(varint_result);
+						std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
+						int block_height = std::get<0>(varint_result);
 						transaction_index += std::get<1>(varint_result);
 						result += "Block Height = "+std::to_string(block_height)+"\n";
 
 						varint_result = from_varint(compressed_transaction.substr(transaction_index));
-						block_index = std::get<0>(varint_result);
+						int block_index = std::get<0>(varint_result);
 						transaction_index += std::get<1>(varint_result);
 						result += "Block Index = "+std::to_string(block_index)+"\n";
+						std::vector<CBlockIndex*> blocks;
 						blocks = blockman->GetAllBlockIndices();
-						blocks_length = blocks.size();
+						int blocks_length = blocks.size();
 						bool block_found = false;
-						for (blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
+						for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
+							const CBlockIndex* pindex{nullptr};
 							pindex = blocks.at(blocks_index);
-							height = pindex->nHeight;
+							int height = pindex->nHeight;
 							if (block_height == height) {
 								result += "height = "+std::to_string(height)+"\n";
+								CBlock block;
 								ReadBlockFromDisk(block, pindex, consensus_params);
 								result += "Block Hash = "+pindex->GetBlockHash().GetHex()+"\n";
 								txid = (*block.vtx.at(block_index)).GetHash();
@@ -1609,7 +1547,7 @@ static RPCHelpMan decompressrawtransaction()
 					}
 
 					/* Parse Vout */
-					varint_result = from_varint(compressed_transaction.substr(transaction_index));
+					std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
 					vout_int = std::get<0>(varint_result);
 					transaction_index += std::get<1>(varint_result);
 					result += "Vout = "+std::to_string(vout_int)+"\n";
@@ -1623,10 +1561,11 @@ static RPCHelpMan decompressrawtransaction()
 					"00": Custom Input Type
 					"11": Compressed Input Type, Read Data Complete it After
 				*/
+				std::vector<std::vector<unsigned char>> stack;
 				if (input_type == "00") {
 					/* Parse Script Length */
-					varint_result = from_varint(compressed_transaction.substr(transaction_index));
-					script_length = std::get<0>(varint_result);
+					std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
+					int script_length = std::get<0>(varint_result);
 					transaction_index += std::get<1>(varint_result);
 					result += "Script Length = "+std::to_string(script_length)+"\n";
 
@@ -1634,18 +1573,18 @@ static RPCHelpMan decompressrawtransaction()
 					hex = compressed_transaction.substr(transaction_index, script_length*2);
 					transaction_index += script_length*2;
 					result += "Script = "+hex+"\n";
-					bytes = hex_to_bytes(hex);
+					std::vector<unsigned char> bytes = hex_to_bytes(hex);
 					scriptSig = CScript(bytes.begin(), bytes.end());
 
 					/* Parse Witness Count */
 					varint_result = from_varint(compressed_transaction.substr(transaction_index));
-					witness_count = std::get<0>(varint_result);
+					int witness_count = std::get<0>(varint_result);
 					transaction_index += std::get<1>(varint_result);
 					result += "Witness Script Count = "+std::to_string(witness_count)+"\n";
-					for (witnesses_index = 0; witnesses_index < witness_count; witnesses_index++) {
+					for (int witnesses_index = 0; witnesses_index < witness_count; witnesses_index++) {
 						/* Parse Witness Length */
-						varint_result = from_varint(compressed_transaction.substr(transaction_index));
-						witness_script_length = std::get<0>(varint_result);
+						std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
+						int witness_script_length = std::get<0>(varint_result);
 						transaction_index += std::get<1>(varint_result);
 						result += "Witness Script Length = "+std::to_string(witness_script_length)+"\n";
 
@@ -1668,23 +1607,21 @@ static RPCHelpMan decompressrawtransaction()
 				}
 
 				/* Assemble CTxIn */
+				COutPoint outpoint;
 				outpoint = COutPoint(txid, vout_int);
-				if (sequence) {
-					ctxin = CTxIn(outpoint, scriptSig, sequence);
-					ctxin.scriptWitness.stack = stack;
-					vin.push_back(ctxin);
-				} else {
-					result += "FAILURE: sequence null";
-					return result;
-				}
+				CTxIn ctxin = CTxIn(outpoint, scriptSig, sequence);
+				ctxin.scriptWitness.stack = stack;
+				vin.push_back(ctxin);
 			}
 			mtx.vin = vin;
 			result += "^^^^^^^^^INPUT^^^^^^^^^\n";
-			for (output_index = 0; output_index < output_count; output_index++) {
+			std::vector<CTxOut> vout;
+			for (int output_index = 0; output_index < output_count; output_index++) {
 				/* Parse Output Type 
 					"000": Output Type Uncompressed, Read From Next Byte
 					_: Parse Output Type From output_type_bits
 				*/
+				std::string output_type;
 				if (output_type_bits == "000") {
 					/* Parse Output Type */
 					hex = compressed_transaction.substr(transaction_index, 2);
@@ -1696,8 +1633,8 @@ static RPCHelpMan decompressrawtransaction()
 				}
 
 				/* Parse Amount */
-				varint_result = from_varint(compressed_transaction.substr(transaction_index));
-				amount = std::get<0>(varint_result);
+				std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
+				CAmount amount = std::get<0>(varint_result);
 				transaction_index += std::get<1>(varint_result);
 				result += "Amount = "+std::to_string(amount)+"\n";
 
@@ -1710,6 +1647,7 @@ static RPCHelpMan decompressrawtransaction()
 					"110": P2TR
 					"111": Custom Script
 				*/
+				CScript output_script;
 				byte = binary_to_int("00000"+output_type);
 				switch(byte)
 				{
@@ -1719,7 +1657,7 @@ static RPCHelpMan decompressrawtransaction()
 						result += "Script = "+hex+"\n";
 						hex = "41"+hex+"ac";
 						result += "Exteneded Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
@@ -1729,7 +1667,7 @@ static RPCHelpMan decompressrawtransaction()
 						result += "Script = "+hex+"\n";
 						hex = "a914"+hex+"87";
 						result += "Exteneded Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
@@ -1739,7 +1677,7 @@ static RPCHelpMan decompressrawtransaction()
 						result += "Script = "+hex+"\n";
 						hex = "76a914"+hex+"88ac";
 						result += "Exteneded Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
@@ -1749,7 +1687,7 @@ static RPCHelpMan decompressrawtransaction()
 						result += "Script = "+hex+"\n";
 						hex = "0020"+hex;
 						result += "Exteneded Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
@@ -1759,7 +1697,7 @@ static RPCHelpMan decompressrawtransaction()
 						result += "Script = "+hex+"\n";
 						hex = "0014"+hex;
 						result += "Exteneded Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
@@ -1769,15 +1707,15 @@ static RPCHelpMan decompressrawtransaction()
 						result += "Script = "+hex+"\n";
 						hex = "5120"+hex;
 						result += "Exteneded Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
 					case 7:
 					{
 						/* Parse Script Length */
-						varint_result = from_varint(compressed_transaction.substr(transaction_index));
-						script_length = std::get<0>(varint_result);
+						std::tuple<long int, int32_t> varint_result = from_varint(compressed_transaction.substr(transaction_index));
+						int script_length = std::get<0>(varint_result);
 						transaction_index += std::get<1>(varint_result);
 						result += "Script Length = "+std::to_string(script_length)+"\n";
 
@@ -1785,7 +1723,7 @@ static RPCHelpMan decompressrawtransaction()
 						hex = compressed_transaction.substr(transaction_index, script_length*2);
 						transaction_index += script_length*2;
 						result += "Script = "+hex+"\n";
-						bytes = hex_to_bytes(hex);
+						std::vector<unsigned char> bytes = hex_to_bytes(hex);
 						output_script = CScript(bytes.begin(), bytes.end());
 						break;
 					}
@@ -1799,31 +1737,35 @@ static RPCHelpMan decompressrawtransaction()
 			mtx.vout = vout;
 			result += "^^^^^^^^^OUTPUT^^^^^^^^^\n";
 
-			partial_inputs_length = half_finished_inputs.size();
-			for (partial_inputs_index = 0; partial_inputs_index < partial_inputs_length; partial_inputs_index++) {
+			int partial_inputs_length = half_finished_inputs.size();
+			for (int partial_inputs_index = 0; partial_inputs_index < partial_inputs_length; partial_inputs_index++) {
 				/* Complete Input Types */
-				input_index = half_finished_inputs.at(partial_inputs_index);
+				int input_index = half_finished_inputs.at(partial_inputs_index);
 				result += "Half Finished Input "+std::to_string(partial_inputs_index)+", "+std::to_string(input_index)+"---------------------\n";
+				uint256 block_hash;
+				Consensus::Params consensusParams;
 				CTransactionRef prev_tx = GetTransaction(NULL, NULL, mtx.vin.at(input_index).prevout.hash, consensusParams, block_hash);
 				CMutableTransaction prev_mtx = CMutableTransaction(*prev_tx);
 				CScript script_pubkey = (*prev_tx).vout.at(mtx.vin.at(input_index).prevout.n).scriptPubKey;
 				CAmount amount = (*prev_tx).vout.at(mtx.vin.at(input_index).prevout.n).nValue;
 				result += "amount = "+std::to_string(amount)+"\n";
 				result += "Scritp Pubkey = "+serialize_script(script_pubkey)+"\n";
-				output_result = get_output_type((*prev_tx).vout.at(mtx.vin.at(input_index).prevout.n), result);
-				script_type = std::get<0>(output_result);
+				std::tuple<std::string, std::vector<unsigned char>> output_result = get_output_type((*prev_tx).vout.at(mtx.vin.at(input_index).prevout.n), result);
+				std::string script_type = std::get<0>(output_result);
 				byte = binary_to_int(script_type);
 
 				/* Parse Input Type 
 					"011"|"101": ECDSA Signature
 					"110": Schnorr Signature
 				*/
+				std::vector<secp256k1_ecdsa_recoverable_signature> recovered_signatures;
+				secp256k1_ecdsa_recoverable_signature rsig;
 				if (byte == 3 || byte == 5) {
 					result += "ECDSA\n";
-					compact_signature = hex_to_bytes(compressed_signatures.at(partial_inputs_index));
-					for (recovery_index = 0; recovery_index < 4; recovery_index++) {
+					std::vector<unsigned char> compact_signature = hex_to_bytes(compressed_signatures.at(partial_inputs_index));
+					for (int recovery_index = 0; recovery_index < 4; recovery_index++) {
 						/* Parse the compact signature with each of the 4 recovery IDs */
-						r = secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &rsig, &compact_signature[0], recovery_index);
+						int r = secp256k1_ecdsa_recoverable_signature_parse_compact(ctx, &rsig, &compact_signature[0], recovery_index);
 						if (r == 1) {
 							recovered_signatures.push_back(rsig);
 						}
@@ -1833,43 +1775,40 @@ static RPCHelpMan decompressrawtransaction()
 				} else {
 					result += "ISSUE WITH INPUT SCRIPT\n";
 				}
-				mtx.nLockTime = 1234567;
-				int test = 0;
 				while(true) {
-					test += 1;
-					if (test ==	2) {
-						break;
-					}
-					pubkeys.clear();
 					/* Parse Input 
 					"011": P2PKH
 					"101": P2WPKH
 					"110": P2TR
 					*/
+					std::vector<secp256k1_pubkey> pubkeys;
+					std::vector<unsigned char> public_key_bytes;
 					if (byte == 3 ) {
 						result += "P2PKH\n";
 						
 						/* Hash the Trasaction to generate the SIGHASH */
 						result += "Hash Type = "+int_to_hex(hash_types.at(partial_inputs_index))+"\n";
-						hash = SignatureHash(script_pubkey, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::BASE);
+						uint256 hash = SignatureHash(script_pubkey, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::BASE);
 						hex = hash.GetHex();
+						std::vector<unsigned char> bytes;
 						bytes = hex_to_bytes(hex);
 						std::reverse(bytes.begin(), bytes.end());
 						hex = bytes_to_hex(bytes);
 						result += "message = "+hex+"\n";
-						recovered_signatures_length = recovered_signatures.size();
-						for (recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
+						int recovered_signatures_length = recovered_signatures.size();
+						for (int recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
 							/* Run Recover to get the Pubkey for the given Recovered Signature and Message/SigHash (Fails half the time(ignore)) */
-							r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &bytes[0]);
+							secp256k1_pubkey pubkey;
+							int r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &bytes[0]);
 							if (r == 1) {
 								result += "SUCCESS\n";
 								pubkeys.push_back(pubkey);
 							}
 						}
-
-						pubkey_found = false;
-						pubkeys_length = pubkeys.size();
-						for (pubkeys_index = 0; pubkeys_index < pubkeys_length; pubkeys_index++) {
+						int pubkeys_length = pubkeys.size();
+						secp256k1_ecdsa_signature sig;
+						bool pubkey_found = false;
+						for (int pubkeys_index = 0; pubkeys_index < pubkeys_length; pubkeys_index++) {
 							result += "\nPUBKEY = "+std::to_string(pubkeys_index)+"\n";
 							/* Serilize Compressed Pubkey */
 							std::vector<unsigned char> c_vch (33);
@@ -1889,7 +1828,7 @@ static RPCHelpMan decompressrawtransaction()
 							hex = "76a914"+hex+"88ac";
 							result += "COMPRESSED Script Pubkey = "+hex+"\n";
 							bytes = hex_to_bytes(hex);
-							c_script_pubkey = CScript(bytes.begin(), bytes.end());
+							CScript c_script_pubkey = CScript(bytes.begin(), bytes.end());
 							/* Test Scripts */
 							if (serialize_script(c_script_pubkey) == serialize_script(script_pubkey)) {
 								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recovered_signatures.at(pubkeys_index));
@@ -1918,7 +1857,7 @@ static RPCHelpMan decompressrawtransaction()
 							hex = "76a914"+hex+"88ac";
 							result += "UNCOMPRESSED Script Pubkey = "+hex+"\n";
 							bytes = hex_to_bytes(hex);
-							uc_script_pubkey = CScript(bytes.begin(), bytes.end());
+							CScript uc_script_pubkey = CScript(bytes.begin(), bytes.end());
 							/* Test Scripts */
 							if (serialize_script(uc_script_pubkey) == serialize_script(script_pubkey)) {
 								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recovered_signatures.at(pubkeys_index));
@@ -1933,17 +1872,17 @@ static RPCHelpMan decompressrawtransaction()
 							std::vector<unsigned char> sig_der (71);
 							size_t sig_der_size = 71;
 							secp256k1_ecdsa_signature_serialize_der(ctx, &sig_der[0], &sig_der_size, &sig);
-							result += "Sig Length = "+std::to_string(sig_der_size);
-							hex = int_to_hex(sig_der_size+1);
+							result += "Sig Length = "+std::to_string(sig_der_size)+"\n";
+							std::string hex = int_to_hex(sig_der_size+1);
 							hex += bytes_to_hex(sig_der, sig_der_size);
 							hex += int_to_hex(hash_types.at(partial_inputs_index));
-							hex2 = bytes_to_hex(public_key_bytes);
-							pubkey_length = hex2.length()/2;
+							std::string hex2 = bytes_to_hex(public_key_bytes);
+							int pubkey_length = hex2.length()/2;
 							hex += int_to_hex(pubkey_length);
 							hex += hex2;
 							result += "Script Signature = "+hex+"\n";
 							bytes = hex_to_bytes(hex);
-							scriptSig = CScript(bytes.begin(), bytes.end());
+							CScript scriptSig = CScript(bytes.begin(), bytes.end());
 							mtx.vin.at(input_index).scriptSig = scriptSig;
 						} else {
 							result += "FAILURE: no pubkey found\n";
@@ -1951,14 +1890,14 @@ static RPCHelpMan decompressrawtransaction()
 					} else if (byte == 5) {
 						result += "V0_P2WPKH\n";
 						/* Hash the Trasaction to generate the SIGHASH */
+						secp256k1_ecdsa_signature sig;
 						std::string scriptPubKeyHash = serialize_script(script_pubkey);
-						result += "test1 = "+scriptPubKeyHash+"\n";
 						std::string pubkeyhash = scriptPubKeyHash.substr(4, 40);
-						result += "test2 = "+pubkeyhash+"\n";
+						std::vector<unsigned char> bytes;
 						bytes = hex_to_bytes("76a914"+pubkeyhash+"88ac");
 						CScript script_code = CScript(bytes.begin(), bytes.end()); 
 						result += "Script Code = "+serialize_script(script_code)+"\n"; 
-						hash = SignatureHash(script_code, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::WITNESS_V0);
+						uint256 hash = SignatureHash(script_code, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::WITNESS_V0);
 						//TODO: Get Bytes directly.
 						hex = hash.GetHex();
 						bytes = hex_to_bytes(hex);
@@ -1967,19 +1906,20 @@ static RPCHelpMan decompressrawtransaction()
 						result += "message = "+hex+"\n";
 
 						pubkeys.clear();
-						recovered_signatures_length = recovered_signatures.size();
-						for (recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
+						int recovered_signatures_length = recovered_signatures.size();
+						for (int recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
 							/* Run Recover to get the Pubkey for the given Recovered Signature and Message/SigHash (Fails half the time(ignore)) */
-							r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &bytes[0]);
+							secp256k1_pubkey pubkey;
+							int r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &bytes[0]);
 							if (r == 1) {
 								result += "SUCCESS\n";
 								pubkeys.push_back(pubkey);
 							}
 						}
 
-						pubkey_found = false;
-						pubkeys_length = pubkeys.size();
-						for (pubkeys_index = 0; pubkeys_index < pubkeys_length; pubkeys_index++) {
+						bool pubkey_found = false;
+						int pubkeys_length = pubkeys.size();
+						for (int pubkeys_index = 0; pubkeys_index < pubkeys_length; pubkeys_index++) {
 							result += "\nPUBKEY = "+std::to_string(pubkeys_index)+"\n";
 							/* Serilize Compressed Pubkey */
 							std::vector<unsigned char> c_vch (33);
@@ -1999,8 +1939,7 @@ static RPCHelpMan decompressrawtransaction()
 							hex = "0014"+hex;
 							result += "COMPRESSED Script Pubkey = "+hex+"\n";
 							bytes = hex_to_bytes(hex);
-							c_script_pubkey = CScript(bytes.begin(), bytes.end());
-							result += "test = "+serialize_script(script_pubkey)+"\n";
+							CScript c_script_pubkey = CScript(bytes.begin(), bytes.end());
 							/* Test Scripts */
 							if (serialize_script(c_script_pubkey) == serialize_script(script_pubkey)) {
 								result += "index = "+std::to_string(pubkeys_index)+"\n";
@@ -2020,14 +1959,15 @@ static RPCHelpMan decompressrawtransaction()
 							sig_der.push_back(hash_types.at(partial_inputs_index));
 							stack.push_back(sig_der);
 							stack.push_back(public_key_bytes);
+							CScriptWitness scriptWitness;
 							scriptWitness.stack = stack;
+							result += "INSERTING "+std::to_string(input_index)+"\n";
 							mtx.vin.at(input_index).scriptWitness = scriptWitness;
 						} else {
 							result += "FAILURE: no pubkey found\n";
 						}
 					} else if (byte == 6) {
 						result += "P2TR\n";
-						stack.clear();
 						std::vector<unsigned char> schnorr_signature = hex_to_bytes(compressed_signatures.at(partial_inputs_index));
 						if (!locktime_found) {
 							/* Script Execution Data Init */
@@ -2038,22 +1978,27 @@ static RPCHelpMan decompressrawtransaction()
 							/* Prevout Init */
 							PrecomputedTransactionData cache;
 							std::vector<CTxOut> utxos;
-							input_length = mtx.vin.size();
-							for (input_index_2 = 0; input_index_2 < input_length; input_index_2++) {
+							int input_length = mtx.vin.size();
+							for (int input_index_2 = 0; input_index_2 < input_length; input_index_2++) {
+								uint256 block_hash;
 								CTransactionRef prev_tx = GetTransaction(NULL, NULL, mtx.vin.at(input_index_2).prevout.hash, consensusParams, block_hash);
 								// CMutableTransaction prev_mtx = CMutableTransaction(*prev_tx);
 								CScript script = (*prev_tx).vout.at(mtx.vin.at(input_index_2).prevout.n).scriptPubKey;
+								result += "prevout script = "+serialize_script(script)+"\n";
 								amount = (*prev_tx).vout.at(mtx.vin.at(input_index_2).prevout.n).nValue;
+								result += "amount = "+std::to_string(amount)+"\n";
 								utxos.emplace_back(amount, script);
 							}
 							cache.Init(CTransaction(mtx), std::vector<CTxOut>{utxos}, true);
-
-							r = SignatureHashSchnorr(hash, execdata, mtx, input_index, hash_types.at(partial_inputs_index), SigVersion::TAPROOT, cache, MissingDataBehavior::FAIL);
+							result += "Locktime = "+std::to_string(mtx.nLockTime)+"\n";
+							uint256 hash;
+							int r = SignatureHashSchnorr(hash, execdata, mtx, input_index, hash_types.at(partial_inputs_index), SigVersion::TAPROOT, cache, MissingDataBehavior::FAIL);
 							if (!r) {
 								result += "FAILURE SCHNORR HASH\n";
 							}
 							hex = hash.GetHex();
 							result += "message = "+hex+"\n";
+							std::vector<unsigned char> bytes;
 							r = get_first_push_bytes(bytes, script_pubkey);
 							if (!r) {
 								result += "ISSUE: Could not get push bytes\n";
@@ -2076,9 +2021,12 @@ static RPCHelpMan decompressrawtransaction()
 							}
 						}
 						if (locktime_found) {
-							stack.clear();
-							schnorr_signature.push_back(hash_types.at(partial_inputs_index));
+							std::vector<std::vector<unsigned char>> stack;
+							if (hash_types.at(partial_inputs_index) != 0x00) {
+								schnorr_signature.push_back(hash_types.at(partial_inputs_index));	
+							}
 							stack.push_back(schnorr_signature);
+							result += "INSERTING "+std::to_string(input_index)+"\n";
 							mtx.vin.at(input_index).scriptWitness.stack = stack;
 						}
 
