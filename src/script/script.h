@@ -530,9 +530,13 @@ public:
      */
     unsigned int GetSigOpCount(const CScript& scriptSig) const;
 
+	bool IsPayToPublicKey() const;
     bool IsPayToScriptHash() const;
-    bool IsPayToTaproot() const;
+    bool IsPayToPublicKeyHash() const;
     bool IsPayToWitnessScriptHash() const;
+    bool IsPayToWitnessPublicKeyHash() const;
+    bool IsPayToTaproot() const;
+
     bool IsWitnessProgram(int& version, std::vector<unsigned char>& program) const;
 
     /** Called by IsStandardTx and P2SH/BIP62 VerifyScript (which makes it consensus-critical). */

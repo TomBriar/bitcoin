@@ -20,6 +20,12 @@ class Coin;
 class COutPoint;
 class SigningProvider;
 
+enum OutputScriptType { CustomOutput=1, P2PK, P2SH, P2PKH, P2WSH, P2WPKH, P2TR};
+enum InputScriptType { CustomInput=0, Legacy, Segwit, Taproot };
+const uint32_t SEQUENCE_F0 = 0xFFFFFFF0;
+const uint32_t SEQUENCE_FE = 0xFFFFFFFE;
+const uint32_t SEQUENCE_FF = 0xFFFFFFFF;
+
 /**
  * Sign a transaction with the given keystore and previous transactions
  *
@@ -52,33 +58,21 @@ std::string binary_to_hex(std::string binary);
 
 std::string int_to_hex(int32_t byte);
 
-int32_t char_to_int(char hex_byte);
-
-std::string bytes_to_hex(std::vector<unsigned char> bytes, int trim = 0);
-
-int32_t hex_to_int(std::string hex);
-
-unsigned char hex_to_char(std::string hex);
-
-std::vector<unsigned char> hex_to_bytes(std::string hex);
-
 std::string hex_to_binary(std::string hex);
 
-std::string to_varint(long int intager);
+std::vector<unsigned char> to_varint(long int intager);
 
-std::tuple<long int, long int> from_varint(std::string hex);
+long int from_varint(std::vector<unsigned char>& transaction_bytes, int& index, std::string& result);
 
-std::tuple<int, std::vector<unsigned char>> test_ecdsa_sig(std::vector<unsigned char> vchRet, std::string& result);
+InputScriptType get_input_type(CTxIn input, std::vector<unsigned char>& vchRet, std::string& result);
 
-std::tuple<std::string, std::vector<unsigned char>> get_input_type(CTxIn input, std::string& result);
-
-std::string serialize_script(CScript script);
+std::vector<unsigned char> script_to_bytes(CScript script);
 
 int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
 
-std::tuple<std::string, std::vector<unsigned char>> get_output_type(CTxOut output, std::string& result);
+OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet, std::string& result);
 
-
+std::vector<unsigned char> hex_to_bytes(std::string hex);
 
 
 
