@@ -218,7 +218,7 @@ bool CScript::IsPayToScriptHash() const
 bool CScript::IsPayToPublicKeyHash() const
 {
     // Test for pay-to-public-key-hash CScripts:
-    return (this->size() == 22 &&
+    return (this->size() == 25 &&
             (*this)[0] == OP_DUP &&
             (*this)[1] == OP_HASH160 &&
             (*this)[2] == 0x14 &&

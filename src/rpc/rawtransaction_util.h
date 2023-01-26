@@ -66,7 +66,7 @@ long int from_varint(std::vector<unsigned char>& transaction_bytes, int& index, 
 
 InputScriptType get_input_type(CTxIn input, std::vector<unsigned char>& vchRet, std::string& result);
 
-std::vector<unsigned char> script_to_bytes(CScript script);
+//	std::vector<unsigned char> script_to_bytes(CScript script);
 
 int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
 

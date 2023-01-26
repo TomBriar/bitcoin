@@ -454,6 +454,7 @@ int get_first_push_bytes(std::vector<unsigned char>& data, CScript script)
 static int compress_signature(std::vector<unsigned char>& vchRet, std::string& result)
 {
     secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+	result += "sig to compress = "+HexStr(vchRet)+"\n";
     
     unsigned char hash_type = vchRet.back();
     int length = vchRet.size()-1;
@@ -543,8 +544,9 @@ InputScriptType get_input_type(CTxIn input, std::vector<unsigned char>& vchRet, 
 
 	if (scriptPubKey.IsPayToPublicKeyHash()) {
         result += "get_input_type = Legacy\n";
-		get_first_push_bytes(vchRet, scriptPubKey);
+		get_first_push_bytes(vchRet, input.scriptSig);
 		int r =	compress_signature(vchRet, result);
+		result += "testing = "+std::to_string(r)+"\n";
 		if (!r) return CustomInput;
 		return Legacy;
 	}
@@ -674,20 +676,20 @@ long int from_varint(std::vector<unsigned char>& transaction_bytes, int& index, 
     return value;
 }
 
-std::vector<unsigned char> script_to_bytes(CScript script) 
-{
-    std::vector<unsigned char> result; 
+////std::vector<unsigned char> script_to_bytes(CScript script) 
+////{
+////	std::vector<unsigned char> result; 
 
-    CScriptBase::const_iterator pc = script.begin();
-    while (pc < script.end()) 
-    {   
-    	std::vector<unsigned char> vchRet;
-    	opcodetype opcodeRet;
-        script.GetOp(pc, opcodeRet, vchRet);
-		result.push_back(opcodeRet);
-        if (!vchRet.empty()) {
-			result.insert(result.end(),	vchRet.begin(), vchRet.end());
-        }
-    }
-    return result;
-}
+////	CScriptBase::const_iterator pc = script.begin();
+////	while (pc < script.end()) 
+////	{   
+////		std::vector<unsigned char> vchRet;
+////		opcodetype opcodeRet;
+////		script.GetOp(pc, opcodeRet, vchRet);
+////		result.push_back(opcodeRet);
+////		if (!vchRet.empty()) {
+////			result.insert(result.end(),	vchRet.begin(), vchRet.end());
+////		}
+////	}
+////	return result;
+////}

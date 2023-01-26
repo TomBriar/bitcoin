@@ -454,7 +454,6 @@ static RPCHelpMan compressrawtransaction()
             active_chainstate.ForceFlushStateToDisk();
 			BlockManager* blockman = &active_chainstate.m_blockman;
 
-			mtx.nVersion = 13949502;
 
 			std::vector<unsigned char> transaction_result_bytes;
 			unsigned char input_byte = 0;
@@ -520,7 +519,7 @@ static RPCHelpMan compressrawtransaction()
 				}
 				case 3:
 				{
-					input_byte |= 0x0b;
+					input_byte |= 0x0c;
 					break;
 				}
 			}
@@ -556,13 +555,15 @@ static RPCHelpMan compressrawtransaction()
 					input_byte |= 0x20;
     			}
     		} else {
-				input_byte |= 0x10;
+				result += "Input Byte = "+int_to_hex(input_byte)+"\n";
+				input_byte |= 0x20;
 				std::vector<unsigned char> input_bytes;
 				inputs.push_back(std::make_tuple(CustomInput, input_bytes));
     		}
+			result += "Input Byte = "+int_to_hex(input_byte)+"\n";
 
     		/* Encode Lock Time
-    			0xb0: If locktime is 0
+    			0xc0: If locktime is 0
     			0x80: If locktime is not zero and at least one input type is not Custom then only Encode Half the locktime.
     			0x00: If locktime is non zero and not a coinbase transaction transmite the two least significant bytes of the locktime and we'll brute force the remaninig bytes in the decoding.
     		*/
@@ -572,7 +573,7 @@ static RPCHelpMan compressrawtransaction()
 					input_byte |= 0x80;
 				}
     		} else {
-				input_byte |= 0xb0;
+				input_byte |= 0xc0;
 			}
 
     		/* Push Input Byte 
@@ -726,7 +727,7 @@ static RPCHelpMan compressrawtransaction()
     		/* Push Input Count 
     			If the Input Count is greater then 3, then Encode the Input Count as a VarInt.
     		*/
-    		if (!(input_byte & 0x0b)) {
+    		if (!(input_byte & 0x0c)) {
     			std::vector<unsigned char> input_count_varint = to_varint(mtx.vin.size());
     			result += "Input Count VarInt = "+HexStr(input_count_varint)+"\n";
 				transaction_result_bytes.insert(transaction_result_bytes.end(), input_count_varint.begin(), input_count_varint.end());
@@ -753,7 +754,7 @@ static RPCHelpMan compressrawtransaction()
     			If the locktime was not zero and this is not a coinbase transaction, Encode the two least signafigant bytes as Hex 
     			If the locktime was not zero and this is a coinbase transaction, encode the LockTime as a VarInt. 
     		*/
-    		if ((input_byte & 0xb0) == 0x01) {
+    		if ((input_byte & 0xc0) == 0x01) {
     			int twobytelimit = pow(2, 16);
     			int bytelimit = pow(2, 8);
     			unsigned char first_half = (mtx.nLockTime % twobytelimit) >> 8;
@@ -761,7 +762,7 @@ static RPCHelpMan compressrawtransaction()
     			result += "Shortend Locktime = "+int_to_hex(first_half)+int_to_hex(second_half)+"\n";
 				transaction_result_bytes.push_back(first_half);
 				transaction_result_bytes.push_back(second_half);
-    		} else if ((input_byte & 0xb0) == 0x03) {
+    		} else if ((input_byte & 0xc0) == 0x03) {
     			std::vector<unsigned char> locktime_varint = to_varint(mtx.nLockTime);
     			result += "Locktime VarInt = "+HexStr(locktime_varint)+"\n";
 				transaction_result_bytes.insert(transaction_result_bytes.end(), locktime_varint.begin(), locktime_varint.end());
@@ -947,7 +948,7 @@ static RPCHelpMan compressrawtransaction()
     			/* Push Output Type 
     				"000": Uncompressed Output Type, Encode Next Byte
     			*/
-    			if ((output_byte & 0x07) == 0x00) {
+    			if ((output_byte & 0xe0) == 0x00) {
     				result += "Output Type = "+int_to_hex(output_type)+"\n";
 					transaction_result_bytes.push_back(output_type);
     			}
@@ -959,11 +960,11 @@ static RPCHelpMan compressrawtransaction()
 				transaction_result_bytes.insert(transaction_result_bytes.end(), amount_varint.begin(), amount_varint.end());
 
     			/* Encode Output 
-    				"111": Uncompressed Output, Custom Script
+    				"001": Uncompressed Output, Custom Script
     				_: Push Script Hash Minus Op Code Bytes
     			*/
-    			if ((output_byte & 0x07) == 0x07) {
-    				std::vector<unsigned char> script = script_to_bytes(mtx.vout.at(output_index).scriptPubKey);
+    			if ((output_byte & 0xe0) >> 5 == 0x01) {
+    				CScript script = mtx.vout.at(output_index).scriptPubKey;
     				int script_length = script.size();
     				std::vector<unsigned char> script_length_varint = to_varint(script_length);
 
@@ -987,10 +988,10 @@ static RPCHelpMan compressrawtransaction()
 				"xx"  : Output Byte
 				"xx"  : Coinbase Byte
 				"?"   : Version VarInt      if (Input Byte & 0x03 == 0x00)
-				"?"   : Input Count VarInt  if (Input Byte & 0x0b == 0x00)
+				"?"   : Input Count VarInt  if (Input Byte & 0x0c == 0x00)
 				"xx"  : Input Type Byte     if (Input Byte & 0x30 == 0x01)
-				"xxxx": LockTime Shortend   if (Input Byte & 0xb0 == 0x01)
-				"?"   : LockTime VarInt     if (Input Byte & 0xb0 == 0x03)
+				"xxxx": LockTime Shortend   if (Input Byte & 0xc0 == 0x01)
+				"?"   : LockTime VarInt     if (Input Byte & 0xc0 == 0x03)
 				"?"   : Sequence VarInt     if (Output Byte & 0x07 == 0x01)
 				"xx"  : Sequence Byte       if (Output Byte & 0x07 == 0x02)
 				"?"   : Output Count VarInt if (Output Byte & 0x18 == 0x00)
@@ -1086,7 +1087,7 @@ static RPCHelpMan decompressrawtransaction()
 				0x01-0x03: Input Count Directly
 				0x00: Input Count Encoded As VarInt
 			*/
-			unsigned char input_count_byte = (input_byte & 0x0b) >> 2;
+			unsigned char input_count_byte = (input_byte & 0x0d) >> 2;
 
 			/* Parse Input Type 
 				0x00: More then 3 Inputs, Non Identical Script Types.
@@ -1095,13 +1096,14 @@ static RPCHelpMan decompressrawtransaction()
 				0x03: Identical Script Types, Legacy, Segwit, or Taproot.
 			*/
 			unsigned char input_type_byte = (input_byte & 0x30) >> 4;
+			result += "input_type_byte = "+int_to_hex(input_type_byte)+"\n";
 
     		/* Parse Lock Time
 				0x03: Locktime 0
 				0x02: Locktime Encoded 2 LSBytes
 				0x00: Locktime Encoded As VarInt
     		*/
-			unsigned char locktime_byte = (input_byte & 0xb0) >> 6;
+			unsigned char locktime_byte = (input_byte & 0xc0) >> 6;
 
     		/* Parse Output Byte 
     			"xxx": Sequence
@@ -1185,7 +1187,7 @@ static RPCHelpMan decompressrawtransaction()
     		if (locktime_byte == 0x01) {
 				shortend_locktime = std::make_tuple(transaction_bytes.at(index), transaction_bytes.at(index+1));
 				index += 2;
-    		} else if ((input_byte & 0xb0) == 0x03) {
+    		} else if ((input_byte & 0xc0) == 0x03) {
 				mtx.nLockTime = from_varint(transaction_bytes, index, result);
     		}
 
@@ -1240,15 +1242,16 @@ static RPCHelpMan decompressrawtransaction()
 					0x02: All Inputs Identical, Input is Custom Type
 					0x03: All Inputs Identical, Input is Compressed
 				*/
-				unsigned char input_type = 0;
+				bool custom_input_type = false;
 				if (input_type_byte == 0x00) {
-					input_type = transaction_bytes.at(index);
+					custom_input_type = !transaction_bytes.at(index);
 					index += 1;
 				} else if (input_type_byte == 0x01) {
-					input_type = (input_type_encoded_byte & (0x03 << input_index)) >> input_index;
-				} else {
-					input_type = input_type_byte;
+					custom_input_type = !((input_type_encoded_byte & (0x03 << input_index)) >> input_index);
+				} else if (input_type_byte == 0x02) {
+					custom_input_type = true;
 				}
+				result += "custom_input_type = "+std::to_string(custom_input_type)+"\n";
 
 				int vout;
 				uint256 txid;
@@ -1310,7 +1313,7 @@ static RPCHelpMan decompressrawtransaction()
 				*/
 				std::vector<std::vector<unsigned char>> stack;
 				CScript script;
-				if (!input_type) {
+				if (custom_input_type) {
 					/* Parse Script Length */
 					int script_length = from_varint(transaction_bytes, index, result);
 					result += "Script Length = "+std::to_string(script_length)+"\n";
@@ -1364,8 +1367,6 @@ static RPCHelpMan decompressrawtransaction()
 			mtx.vin = vin;
 			result += "^^^^^^^^^^^^^^^^^^^^INPUT^^^^^^^^^^^^^^^^^^\n";
 
-			CTransactionRef tx = MakeTransactionRef(CTransaction(mtx));
-			return result+"|"+EncodeHexTx(*tx, RPCSerializationFlags());
 			std::vector<CTxOut> vout;
 			for (int output_index = 0; output_index < output_count_byte; output_index++) {
 				/* Parse Output Type 
@@ -1398,7 +1399,17 @@ static RPCHelpMan decompressrawtransaction()
 					0x07: P2TR
 				*/
 				CScript output_script;
-				if (output_type == 0x02) {
+				if (output_type == 0x01) {
+					/* Parse Script Length */
+					int script_length = from_varint(transaction_bytes, index, result);
+					result += "Script Length = "+std::to_string(script_length)+"\n";
+
+					/* Parse Script */
+					std::vector<unsigned char> script_bytes(script_length);
+					copy(transaction_bytes.begin()+index, transaction_bytes.begin()+index+script_length+1, script_bytes.begin());
+					index += script_length;
+					output_script = CScript(script_bytes.begin(), script_bytes.end());
+				} else if (output_type == 0x02) {
 					std::vector<unsigned char> script_bytes(67);
 					script_bytes[0] = 0x41;
 					copy(transaction_bytes.begin()+index, transaction_bytes.begin()+index+65+1, script_bytes.begin()+1);
@@ -1407,7 +1418,7 @@ static RPCHelpMan decompressrawtransaction()
 					output_script = CScript(script_bytes.begin(), script_bytes.end());
 				} else if (output_type == 0x03) {
 					std::vector<unsigned char> script_bytes(23);
-					script_bytes[0] =0x19;
+					script_bytes[0] =0xa9;
 					script_bytes[1] = 0x14;
 					copy(transaction_bytes.begin()+index, transaction_bytes.begin()+index+20+1, script_bytes.begin()+2);
 					index += 20;
@@ -1444,18 +1455,8 @@ static RPCHelpMan decompressrawtransaction()
 					copy(transaction_bytes.begin()+index, transaction_bytes.begin()+index+32+1, script_bytes.begin()+2);
 					index += 32;
 					output_script = CScript(script_bytes.begin(), script_bytes.end());
-				} else if (output_type == 0x00) {
-					/* Parse Script Length */
-					int script_length = from_varint(transaction_bytes, index, result);
-					result += "Script Length = "+std::to_string(script_length)+"\n";
-
-					/* Parse Script */
-					std::vector<unsigned char> script_bytes(script_length);
-					copy(transaction_bytes.begin()+index, transaction_bytes.begin()+index+script_length+1, script_bytes.begin()+1);
-					index += script_length;
-					output_script = CScript(script_bytes.begin(), script_bytes.end());
 				}
-				result += "Output Script = "+HexStr(script_to_bytes(output_script))+"\n";
+				result += "Output Script = "+HexStr(output_script)+"\n";
 				vout.push_back(CTxOut(amount, output_script));
 			}
 			mtx.vout = vout;
@@ -1476,7 +1477,7 @@ static RPCHelpMan decompressrawtransaction()
 				std::vector<unsigned char> output_bytes;
 				OutputScriptType prev_output_type = get_output_type(script_pubkey, output_bytes, result);
 
-				result += "Script Pubkey = "+HexStr(script_to_bytes(script_pubkey))+"\n";
+				result += "Script Pubkey = "+HexStr(script_pubkey)+"\n";
 				result += "Amount = "+std::to_string(amount)+"\n";
 
 				std::vector<secp256k1_ecdsa_recoverable_signature> recovered_signatures;
@@ -1497,9 +1498,11 @@ static RPCHelpMan decompressrawtransaction()
 				if (locktime_byte == 0x01) {
 					locktime_found = false;
 				}
-				
-				while(!locktime_found) {
-					std::vector<secp256k1_pubkey> pubkeys;
+				bool first = true;
+				while(!locktime_found || first) {
+					first = false;
+	
+					std::vector<std::tuple<secp256k1_pubkey, secp256k1_ecdsa_recoverable_signature>> pairs;
 					std::vector<unsigned char> public_key_bytes;
 					if (prev_output_type == P2PKH) {
 						
@@ -1512,34 +1515,35 @@ static RPCHelpMan decompressrawtransaction()
 						std::reverse(message.begin(), message.end());
 						result += "message = "+HexStr(message)+"\n";
 						
-						/* Dervive Public Keys */
+						/* Dervive Sig Public Key Pairs */
 						int recovered_signatures_length = recovered_signatures.size();
 						for (int recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
 							/* Run Recover to get the Pubkey for the given Recovered Signature and Message/SigHash (Fails half the time(ignore)) */
 							secp256k1_pubkey pubkey;
 							int r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &message[0]);
 							if (r == 1) {
-								pubkeys.push_back(pubkey);
+								pairs.push_back(std::make_tuple(pubkey, recovered_signatures.at(recovered_signatures_index)));
 							}
 						}
 
 						secp256k1_ecdsa_signature sig;
 						bool pubkey_found = false;
-						int pubkeys_length = pubkeys.size();
-						for (int pubkeys_index = 0; pubkeys_index < pubkeys_length; pubkeys_index++) {
+						int pairs_length = pairs.size();
+						for (int pairs_index = 0; pairs_index < pairs_length; pairs_index++) {
+							secp256k1_pubkey pubkey = std::get<0>(pairs.at(pairs_index));
+							secp256k1_ecdsa_recoverable_signature recoverable_signature = std::get<1>(pairs.at(pairs_index));
 
 							/* Serilize Compressed Pubkey */
 							std::vector<unsigned char> compressed_pubkey (33);
 							size_t c_size = 33;
-							secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &c_size, &pubkeys.at(pubkeys_index), SECP256K1_EC_COMPRESSED);
+							secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &c_size, &pubkey, SECP256K1_EC_COMPRESSED);
 							result += "COMPRESSED public key = "+HexStr(compressed_pubkey)+"\n";
 
 							/* Hash Compressed Pubkey */
 							uint160 c_pubkeyHash;
 							CHash160().Write(compressed_pubkey).Finalize(c_pubkeyHash);
-							//TODO: get bytes directly
-							hex = c_pubkeyHash.GetHex();
-							std::vector<unsigned char> hashed_compressed_pubkey = hex_to_bytes(hex);
+							std::vector<unsigned char> hashed_compressed_pubkey(20);
+							copy(c_pubkeyHash.begin(), c_pubkeyHash.end(), hashed_compressed_pubkey.begin());
 							std::reverse(hashed_compressed_pubkey.begin(), hashed_compressed_pubkey.end());
 							result += "COMPRESSED public key Hash = "+HexStr(hashed_compressed_pubkey)+"\n";
 
@@ -1552,10 +1556,12 @@ static RPCHelpMan decompressrawtransaction()
 							compressed_script_bytes[23] = 0x88;
 							compressed_script_bytes[24] = 0xac;
 							result += "COMPRESSED Script Pubkey = "+HexStr(compressed_script_bytes)+"\n";
+							CScript compressed_script_pubkey = CScript(compressed_script_bytes.begin(),	compressed_script_bytes.end());
 
 							/* Test Scripts */
-							if (compressed_script_bytes == script_to_bytes(script_pubkey)) {
-								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recovered_signatures.at(pubkeys_index));
+							if (compressed_script_pubkey == script_pubkey) {
+								result += "COMPRESSED matches\n";
+								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recoverable_signature);
 								pubkey_found = true;
 								public_key_bytes = compressed_pubkey;
 								break;
@@ -1566,7 +1572,7 @@ static RPCHelpMan decompressrawtransaction()
 							/* Serilize Uncompressed Pubkey */
 							std::vector<unsigned char> uncompressed_pubkey (65);
 							size_t uc_size = 65;
-							secp256k1_ec_pubkey_serialize(ctx, &uncompressed_pubkey[0], &uc_size, &pubkeys.at(pubkeys_index), SECP256K1_EC_UNCOMPRESSED);
+							secp256k1_ec_pubkey_serialize(ctx, &uncompressed_pubkey[0], &uc_size, &pubkey, SECP256K1_EC_UNCOMPRESSED);
 							result += "UNCOMPRESSED public key = "+HexStr(uncompressed_pubkey)+"\n";
 
 							/* Hash Uncompressed PubKey */
@@ -1587,10 +1593,11 @@ static RPCHelpMan decompressrawtransaction()
 							uncompressed_script_bytes[23] = 0x88;
 							uncompressed_script_bytes[24] = 0xac;
 							result += "UNCOMPRESSED Script Pubkey = "+HexStr(uncompressed_pubkey)+"\n";
+							CScript uncompressed_script_pubkey = CScript(uncompressed_script_bytes.begin(),	uncompressed_script_bytes.end());
 
 							/* Test Scripts */
-							if (uncompressed_script_bytes == script_to_bytes(script_pubkey)) {
-								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recovered_signatures.at(pubkeys_index));
+							if (uncompressed_script_pubkey == script_pubkey) {
+								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recoverable_signature);
 								pubkey_found = true;
 								public_key_bytes = uncompressed_pubkey;
 								break;
@@ -1599,173 +1606,182 @@ static RPCHelpMan decompressrawtransaction()
 						if (pubkey_found) {
 							result += "FOUND\n";
 							locktime_found = true;
-							std::vector<unsigned char> signature;
 							std::vector<unsigned char> sig_der (71);
 							size_t sig_der_size = 71;
 							secp256k1_ecdsa_signature_serialize_der(ctx, &sig_der[0], &sig_der_size, &sig);
-							result += "Sig Length = "+std::to_string(sig_der_size)+"\n";
-							signature[0] = sig_der_size+1;
+							sig_der_size += 1;
+							std::vector<unsigned char> signature (sig_der_size+1+1+public_key_bytes.size());
+							signature[0] = sig_der_size;
 							copy(sig_der.begin(), sig_der.end(), signature.begin()+1);
-							signature[72] = hash_types.at(partial_inputs_index);
-							signature[73] = public_key_bytes.size();
-							copy(public_key_bytes.begin(), public_key_bytes.end(), signature.begin()+74);
+							result += "Sig hash type = "+std::to_string(hash_types.at(partial_inputs_index))+"\n";
+							signature[sig_der_size] = hash_types.at(partial_inputs_index);
+							signature[sig_der_size+1] = public_key_bytes.size();
+							result += "Signature = "+HexStr(signature)+"\n";
+							copy(public_key_bytes.begin(), public_key_bytes.end(), signature.begin()+sig_der_size+2);
 							CScript scriptSig = CScript(signature.begin(), signature.end());
 							mtx.vin.at(input_index).scriptSig = scriptSig;
 						}
-					}
-////					} else if (byte == 5) {
-////						result += "V0_P2WPKH\n";
-////						/* Hash the Trasaction to generate the SIGHASH */
-////						secp256k1_ecdsa_signature sig;
-////						std::string scriptPubKeyHash = serialize_script(script_pubkey);
-////						std::string pubkeyhash = scriptPubKeyHash.substr(4, 40);
-////						std::vector<unsigned char> bytes;
-////						bytes = hex_to_bytes("76a914"+pubkeyhash+"88ac");
-////						CScript script_code = CScript(bytes.begin(), bytes.end()); 
-////						result += "Script Code = "+serialize_script(script_code)+"\n"; 
-////						uint256 hash = SignatureHash(script_code, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::WITNESS_V0);
-////						//TODO: Get Bytes directly.
+					} else if (prev_output_type == P2WPKH) {
+						result += "V0_P2WPKH\n";
+						/* Construct Script Code*/
+						std::vector<unsigned char> script_pubkey_bytes;
+						int r = get_first_push_bytes(script_pubkey_bytes, script_pubkey);
+						if (!r) return result;
+						std::vector<unsigned char> script_code_bytes(25);
+						script_code_bytes[0] = 0x76;
+						script_code_bytes[1] = 0xa9;
+						script_code_bytes[2] = 0x14;
+						copy(script_pubkey_bytes.begin(), script_pubkey_bytes.end(), script_code_bytes.begin()+3);
+						script_code_bytes[23] = 0x88;
+						script_code_bytes[24] = 0xac;
+						result += "Script Code = "+HexStr(script_code_bytes)+"\n"; 
+						CScript script_code = CScript(script_code_bytes.begin(), script_code_bytes.end()); 
+
+						/* Hash the Trasaction to generate the SIGHASH */
+						uint256 hash = SignatureHash(script_code, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::WITNESS_V0);
+						std::vector<unsigned char> message(32);
+						copy(hash.begin(), hash.end(), message.begin());
+						std::reverse(message.begin(), message.end());
+						result += "message = "+HexStr(message)+"\n";
+
+						/* Run Recover to get the Pubkey for the given Recovered Signature and Message/SigHash (Fails half the time(ignore)) */
+						int recovered_signatures_length = recovered_signatures.size();
+						for (int recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
+							secp256k1_pubkey pubkey;
+							int r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &message[0]);
+							if (r == 1) {
+								result += "SUCCESS\n";
+								pairs.push_back(std::make_tuple(pubkey, recovered_signatures.at(recovered_signatures_index)));
+							}
+						}
+
+						bool pubkey_found = false;
+						int pairs_length = pairs.size();
+						secp256k1_ecdsa_signature sig;
+						for (int pairs_index = 0; pairs_index < pairs_length; pairs_index++) {
+							secp256k1_pubkey pubkey = std::get<0>(pairs.at(pairs_index));
+							secp256k1_ecdsa_recoverable_signature recoverable_signature = std::get<1>(pairs.at(pairs_index));
+
+							/* Serilize Compressed Pubkey */
+							std::vector<unsigned char> compressed_pubkey (33);
+							size_t compressed_pubkey_size = 33;
+							secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &compressed_pubkey_size, &pubkey, SECP256K1_EC_COMPRESSED);
+							result += "COMPRESSED public key = "+HexStr(compressed_pubkey)+"\n";
+
+							/* Hash Compressed Pubkey */
+							uint160 compressed_pubkey_hash;
+							CHash160().Write(compressed_pubkey).Finalize(compressed_pubkey_hash);
+							std::vector<unsigned char> compressed_pubkey_hash_bytes(20);
+							copy(compressed_pubkey_hash.begin(), compressed_pubkey_hash.end(), compressed_pubkey_hash_bytes.begin());
+							std::reverse(compressed_pubkey_hash_bytes.begin(), compressed_pubkey_hash_bytes.end());
+							result += "COMPRESSED public key Hash = "+HexStr(compressed_pubkey_hash_bytes)+"\n";
+
+							/* Construct Compressed ScriptPubKey */
+							std::vector<unsigned char> compressed_script_pubkey_bytes(22);
+							compressed_script_pubkey_bytes[0] = 0x00;
+							compressed_script_pubkey_bytes[1] = 0x14;
+							copy(compressed_pubkey_hash_bytes.begin(), compressed_pubkey_hash_bytes.end(), compressed_script_pubkey_bytes.begin()+2);
+							result += "COMPRESSED Script Pubkey = "+HexStr(compressed_script_pubkey_bytes)+"\n";
+							CScript compressed_script_pubkey = CScript(compressed_script_pubkey_bytes.begin(), compressed_script_pubkey_bytes.end());
+	
+							/* Test Scripts */
+							if (compressed_script_pubkey == script_pubkey) {
+								result += "index = "+std::to_string(pairs_index)+"\n";
+								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recoverable_signature);
+								pubkey_found = true;
+								public_key_bytes = compressed_pubkey;
+								break;
+							}
+						}
+						if (pubkey_found) {
+							result += "FOUND\n";
+							locktime_found = true;
+							std::vector<unsigned char> sig_der (70);
+							std::vector<std::vector<unsigned char>> stack;
+							size_t sig_der_size = 70;
+							secp256k1_ecdsa_signature_serialize_der(ctx, &sig_der[0], &sig_der_size, &sig);
+							sig_der.push_back(hash_types.at(partial_inputs_index));
+							stack.push_back(sig_der);
+							stack.push_back(public_key_bytes);
+							CScriptWitness scriptWitness;
+							scriptWitness.stack = stack;
+							result += "INSERTING "+std::to_string(input_index)+"\n";
+							mtx.vin.at(input_index).scriptWitness = scriptWitness;
+						} else {
+							result += "FAILURE: no pubkey found\n";
+						}
+					} 
+////else if (byte == 6) {
+////					result += "P2TR\n";
+////					std::vector<unsigned char> schnorr_signature = hex_to_bytes(compressed_signatures.at(partial_inputs_index));
+////					if (!locktime_found) {
+////						/* Script Execution Data Init */
+////						ScriptExecutionData execdata;
+////						execdata.m_annex_init = true;
+////						execdata.m_annex_present = false;
+
+////						/* Prevout Init */
+////						PrecomputedTransactionData cache;
+////						std::vector<CTxOut> utxos;
+////						int input_length = mtx.vin.size();
+////						for (int input_index_2 = 0; input_index_2 < input_length; input_index_2++) {
+////							uint256 block_hash;
+////							CTransactionRef prev_tx = GetTransaction(NULL, NULL, mtx.vin.at(input_index_2).prevout.hash, consensusParams, block_hash);
+////							// CMutableTransaction prev_mtx = CMutableTransaction(*prev_tx);
+////							CScript script = (*prev_tx).vout.at(mtx.vin.at(input_index_2).prevout.n).scriptPubKey;
+////							result += "prevout script = "+serialize_script(script)+"\n";
+////							amount = (*prev_tx).vout.at(mtx.vin.at(input_index_2).prevout.n).nValue;
+////							result += "amount = "+std::to_string(amount)+"\n";
+////							utxos.emplace_back(amount, script);
+////						}
+////						cache.Init(CTransaction(mtx), std::vector<CTxOut>{utxos}, true);
+////						result += "Locktime = "+std::to_string(mtx.nLockTime)+"\n";
+////						uint256 hash;
+////						int r = SignatureHashSchnorr(hash, execdata, mtx, input_index, hash_types.at(partial_inputs_index), SigVersion::TAPROOT, cache, MissingDataBehavior::FAIL);
+////						if (!r) {
+////							result += "FAILURE SCHNORR HASH\n";
+////						}
 ////						hex = hash.GetHex();
-////						bytes = hex_to_bytes(hex);
-////						std::reverse(bytes.begin(), bytes.end());
-////						hex = bytes_to_hex(bytes);
 ////						result += "message = "+hex+"\n";
-
-////						pubkeys.clear();
-////						int recovered_signatures_length = recovered_signatures.size();
-////						for (int recovered_signatures_index = 0; recovered_signatures_index < recovered_signatures_length; recovered_signatures_index++) {
-////							/* Run Recover to get the Pubkey for the given Recovered Signature and Message/SigHash (Fails half the time(ignore)) */
-////							secp256k1_pubkey pubkey;
-////							int r = secp256k1_ecdsa_recover(ctx, &pubkey, &recovered_signatures.at(recovered_signatures_index), &bytes[0]);
-////							if (r == 1) {
-////								result += "SUCCESS\n";
-////								pubkeys.push_back(pubkey);
-////							}
+////						std::vector<unsigned char> bytes;
+////						r = get_first_push_bytes(bytes, script_pubkey);
+////						if (!r) {
+////							result += "ISSUE: Could not get push bytes\n";
 ////						}
-
-////						bool pubkey_found = false;
-////						int pubkeys_length = pubkeys.size();
-////						for (int pubkeys_index = 0; pubkeys_index < pubkeys_length; pubkeys_index++) {
-////							result += "\nPUBKEY = "+std::to_string(pubkeys_index)+"\n";
-////							/* Serilize Compressed Pubkey */
-////							std::vector<unsigned char> c_vch (33);
-////							size_t c_size = 33;
-////							secp256k1_ec_pubkey_serialize(ctx, &c_vch[0], &c_size, &pubkeys.at(pubkeys_index), SECP256K1_EC_COMPRESSED);
-////							hex = bytes_to_hex(c_vch);
-////							result += "COMPRESSED public key = "+hex+"\n";
-////							/* Hash Compressed Pubkey */
-////							uint160 c_pubkeyHash;
-////							CHash160().Write(c_vch).Finalize(c_pubkeyHash);
-////							hex = c_pubkeyHash.GetHex();
-////							bytes = hex_to_bytes(hex);
-////							std::reverse(bytes.begin(), bytes.end());
-////							hex = bytes_to_hex(bytes);
-////							result += "COMPRESSED public key Hash = "+hex+"\n";
-////							/* Construct Compressed ScriptPubKey */
-////							hex = "0014"+hex;
-////							result += "COMPRESSED Script Pubkey = "+hex+"\n";
-////							bytes = hex_to_bytes(hex);
-////							CScript c_script_pubkey = CScript(bytes.begin(), bytes.end());
-////							/* Test Scripts */
-////							if (serialize_script(c_script_pubkey) == serialize_script(script_pubkey)) {
-////								result += "index = "+std::to_string(pubkeys_index)+"\n";
-////								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &recovered_signatures.at(pubkeys_index));
-////								pubkey_found = true;
-////								public_key_bytes = c_vch;
-////								break;
-////							}
+////						hex = bytes_to_hex(bytes);
+////						result += "pubkey = "+hex+"\n";
+////						// hex2 = serialize_script(script_pubkey).substr(4, 64);
+////						// result += "pubkey = "+hex2+"\n";
+////						result += "signature = "+bytes_to_hex(schnorr_signature)+"\n";
+////						secp256k1_xonly_pubkey xonly_pubkey;
+////						r = secp256k1_xonly_pubkey_parse(ctx, &xonly_pubkey, bytes.data());
+////						if (!r) {
+////							result += "FAILURE: ISSUE PUBKEY PARSE\n";
 ////						}
-////						if (pubkey_found) {
-////							result += "FOUND\n";
-////							locktime_found = true;
-////							std::vector<unsigned char> sig_der (70);
-////							std::vector<std::vector<unsigned char>> stack;
-////							size_t sig_der_size = 70;
-////							secp256k1_ecdsa_signature_serialize_der(ctx, &sig_der[0], &sig_der_size, &sig);
-////							sig_der.push_back(hash_types.at(partial_inputs_index));
-////							stack.push_back(sig_der);
-////							stack.push_back(public_key_bytes);
-////							CScriptWitness scriptWitness;
-////							scriptWitness.stack = stack;
-////							result += "INSERTING "+std::to_string(input_index)+"\n";
-////							mtx.vin.at(input_index).scriptWitness = scriptWitness;
+////						r = secp256k1_schnorrsig_verify(ctx, schnorr_signature.data(), hash.begin(), 32, &xonly_pubkey);
+////						if (!r) {
+////							result += "FAILURE: Issue verifiy\n";
 ////						} else {
-////							result += "FAILURE: no pubkey found\n";
-////						}
-////					} else if (byte == 6) {
-////						result += "P2TR\n";
-////						std::vector<unsigned char> schnorr_signature = hex_to_bytes(compressed_signatures.at(partial_inputs_index));
-////						if (!locktime_found) {
-////							/* Script Execution Data Init */
-////							ScriptExecutionData execdata;
-////							execdata.m_annex_init = true;
-////							execdata.m_annex_present = false;
-
-////							/* Prevout Init */
-////							PrecomputedTransactionData cache;
-////							std::vector<CTxOut> utxos;
-////							int input_length = mtx.vin.size();
-////							for (int input_index_2 = 0; input_index_2 < input_length; input_index_2++) {
-////								uint256 block_hash;
-////								CTransactionRef prev_tx = GetTransaction(NULL, NULL, mtx.vin.at(input_index_2).prevout.hash, consensusParams, block_hash);
-////								// CMutableTransaction prev_mtx = CMutableTransaction(*prev_tx);
-////								CScript script = (*prev_tx).vout.at(mtx.vin.at(input_index_2).prevout.n).scriptPubKey;
-////								result += "prevout script = "+serialize_script(script)+"\n";
-////								amount = (*prev_tx).vout.at(mtx.vin.at(input_index_2).prevout.n).nValue;
-////								result += "amount = "+std::to_string(amount)+"\n";
-////								utxos.emplace_back(amount, script);
-////							}
-////							cache.Init(CTransaction(mtx), std::vector<CTxOut>{utxos}, true);
-////							result += "Locktime = "+std::to_string(mtx.nLockTime)+"\n";
-////							uint256 hash;
-////							int r = SignatureHashSchnorr(hash, execdata, mtx, input_index, hash_types.at(partial_inputs_index), SigVersion::TAPROOT, cache, MissingDataBehavior::FAIL);
-////							if (!r) {
-////								result += "FAILURE SCHNORR HASH\n";
-////							}
-////							hex = hash.GetHex();
-////							result += "message = "+hex+"\n";
-////							std::vector<unsigned char> bytes;
-////							r = get_first_push_bytes(bytes, script_pubkey);
-////							if (!r) {
-////								result += "ISSUE: Could not get push bytes\n";
-////							}
-////							hex = bytes_to_hex(bytes);
-////							result += "pubkey = "+hex+"\n";
-////							// hex2 = serialize_script(script_pubkey).substr(4, 64);
-////							// result += "pubkey = "+hex2+"\n";
-////							result += "signature = "+bytes_to_hex(schnorr_signature)+"\n";
-////							secp256k1_xonly_pubkey xonly_pubkey;
-////							r = secp256k1_xonly_pubkey_parse(ctx, &xonly_pubkey, bytes.data());
-////							if (!r) {
-////								result += "FAILURE: ISSUE PUBKEY PARSE\n";
-////							}
-////							r = secp256k1_schnorrsig_verify(ctx, schnorr_signature.data(), hash.begin(), 32, &xonly_pubkey);
-////							if (!r) {
-////								result += "FAILURE: Issue verifiy\n";
-////							} else {
-////								locktime_found = true;
-////							}
-////						}
-////						if (locktime_found) {
-////							std::vector<std::vector<unsigned char>> stack;
-////							if (hash_types.at(partial_inputs_index) != 0x00) {
-////								schnorr_signature.push_back(hash_types.at(partial_inputs_index));	
-////							}
-////							stack.push_back(schnorr_signature);
-////							result += "INSERTING "+std::to_string(input_index)+"\n";
-////							mtx.vin.at(input_index).scriptWitness.stack = stack;
+////							locktime_found = true;
 ////						}
 ////					}
-    					/* If LockTime Has been Found Break, Otherwise add 2^16 to it and try again */
-					if (locktime_found) {
-						result += "LOCKTIME FOUND\n";
-						break;
-					} else {
-						mtx.nLockTime += pow(2, 16);
-						result += "lock = "+std::to_string(mtx.nLockTime)+"\n";
-					}
+////					if (locktime_found) {
+////						std::vector<std::vector<unsigned char>> stack;
+////						if (hash_types.at(partial_inputs_index) != 0x00) {
+////							schnorr_signature.push_back(hash_types.at(partial_inputs_index));	
+////						}
+////						stack.push_back(schnorr_signature);
+////						result += "INSERTING "+std::to_string(input_index)+"\n";
+////						mtx.vin.at(input_index).scriptWitness.stack = stack;
+////					}
+////				}
+					/* If LockTime Has been Found Break, Otherwise add 2^16 to it and try again */
+					mtx.nLockTime += pow(2, 16);
+					result += "newlock = "+std::to_string(mtx.nLockTime)+"\n";
 				}
 			}
+			CTransactionRef tx = MakeTransactionRef(CTransaction(mtx));
+			return result+"|"+EncodeHexTx(*tx, RPCSerializationFlags());
 
 
 ////			result += "---------------------------------------------------\n";
