@@ -555,7 +555,6 @@ static RPCHelpMan compressrawtransaction()
 					input_byte |= 0x20;
     			}
     		} else {
-				result += "Input Byte = "+int_to_hex(input_byte)+"\n";
 				input_byte |= 0x20;
 				std::vector<unsigned char> input_bytes;
 				inputs.push_back(std::make_tuple(CustomInput, input_bytes));
@@ -1776,8 +1775,10 @@ static RPCHelpMan decompressrawtransaction()
 ////					}
 ////				}
 					/* If LockTime Has been Found Break, Otherwise add 2^16 to it and try again */
-					mtx.nLockTime += pow(2, 16);
-					result += "newlock = "+std::to_string(mtx.nLockTime)+"\n";
+					if (!locktime_found) {
+						mtx.nLockTime += pow(2, 16);
+						result += "newlock = "+std::to_string(mtx.nLockTime)+"\n";
+					}
 				}
 			}
 			CTransactionRef tx = MakeTransactionRef(CTransaction(mtx));
