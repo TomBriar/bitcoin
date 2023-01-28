@@ -1511,7 +1511,6 @@ static RPCHelpMan decompressrawtransaction()
 						//TODO: get bytes directly
 						std::string hex = hash.GetHex();
 						std::vector<unsigned char> message = hex_to_bytes(hex);
-						std::reverse(message.begin(), message.end());
 						result += "message = "+HexStr(message)+"\n";
 						
 						/* Dervive Sig Public Key Pairs */
@@ -1543,7 +1542,6 @@ static RPCHelpMan decompressrawtransaction()
 							CHash160().Write(compressed_pubkey).Finalize(c_pubkeyHash);
 							std::vector<unsigned char> hashed_compressed_pubkey(20);
 							copy(c_pubkeyHash.begin(), c_pubkeyHash.end(), hashed_compressed_pubkey.begin());
-							std::reverse(hashed_compressed_pubkey.begin(), hashed_compressed_pubkey.end());
 							result += "COMPRESSED public key Hash = "+HexStr(hashed_compressed_pubkey)+"\n";
 
 							/* Construct Compressed ScriptPubKey */
@@ -1580,7 +1578,6 @@ static RPCHelpMan decompressrawtransaction()
 							//TODO: get bytes directly
 							hex = uc_pubkeyHash.GetHex();
 							std::vector<unsigned char> hashed_uncompressed_pubkey = hex_to_bytes(hex);
-							std::reverse(hashed_uncompressed_pubkey.begin(), hashed_uncompressed_pubkey.end());
 							result += "UNCOMPRESSED public key Hash = "+hex+"\n";
 
 							/* Construct Uncompressed ScriptPubKey */
@@ -1640,7 +1637,6 @@ static RPCHelpMan decompressrawtransaction()
 						uint256 hash = SignatureHash(script_code, mtx, input_index, hash_types.at(partial_inputs_index), amount, SigVersion::WITNESS_V0);
 						std::vector<unsigned char> message(32);
 						copy(hash.begin(), hash.end(), message.begin());
-						std::reverse(message.begin(), message.end());
 						result += "message = "+HexStr(message)+"\n";
 
 						/* Run Recover to get the Pubkey for the given Recovered Signature and Message/SigHash (Fails half the time(ignore)) */
@@ -1672,7 +1668,6 @@ static RPCHelpMan decompressrawtransaction()
 							CHash160().Write(compressed_pubkey).Finalize(compressed_pubkey_hash);
 							std::vector<unsigned char> compressed_pubkey_hash_bytes(20);
 							copy(compressed_pubkey_hash.begin(), compressed_pubkey_hash.end(), compressed_pubkey_hash_bytes.begin());
-							std::reverse(compressed_pubkey_hash_bytes.begin(), compressed_pubkey_hash_bytes.end());
 							result += "COMPRESSED public key Hash = "+HexStr(compressed_pubkey_hash_bytes)+"\n";
 
 							/* Construct Compressed ScriptPubKey */
