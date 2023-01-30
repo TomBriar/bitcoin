@@ -471,64 +471,6 @@ static int compress_signature(std::vector<unsigned char>& vchRet, std::string& r
     return 0;
 }
 
-////InputScriptType get_input_type(CTxIn input, std::vector<unsigned char>& vchRet, std::string& result)
-////{
-////	Consensus::Params consensusParams;
-////	uint256 block_hash;
-////	CTransactionRef tx = GetTransaction(NULL, NULL, input.prevout.hash, consensusParams, block_hash);
-////	CScript scriptPubKey = (*tx).vout.at(input.prevout.n).scriptPubKey;
-////	
-////	/* P2SH and P2WSH are uncompressable */
-////	if (scriptPubKey.IsPayToScriptHash() || scriptPubKey.IsPayToWitnessScriptHash()) {
-////		result += "get_input_type = P2SH|P2PWSH\n";
-////		return CustomInput;
-////	}
-////	
-////	/* If both scriptSig and Witness are not Null then this is a custom script */
-////	if (!input.scriptWitness.IsNull() && input.scriptSig.GetSigOpCount(true) != 0) {
-////		result += "get_input_type = Custom Script, witness and scriptsig\n";
-////		return CustomInput;
-////	}
-
-////	if (!input.scriptWitness.IsNull() && input.scriptSig.GetSigOpCount(true) == 0) {
-////		int length = input.scriptWitness.stack.size();
-////		if (length == 1 && scriptPubKey.IsPayToTaproot()) {
-////			result += "get_input_type = TAPROOT\n";
-////			vchRet = input.scriptWitness.stack.at(0);
-////			return Taproot;
-////		} else if (length == 2) {
-////			/* If the Witness has two entries and the first is an ECDSA Sginature then Input Type is Segwit */
-////			//TODO: can I just check prev script type?
-////			vchRet = input.scriptWitness.stack.at(0);
-////			int r = test_ecdsa_sig(vchRet, result);
-////			if (r) {
-////				result += "get_input_type = P2WPKH\n";
-////				return Segwit;
-////			}
-////		}
-////		/* Witness Can Only be ECDSA or SCHNORR signature, Custom Otherwise */
-////		result += "get_input_type = Custom Script, witness but not ecdsa or taproot\n";
-////		return CustomInput;
-////	} else {
-////		/* If ScriptSig contains an ECDSA Signature then Input Type is Legacy. */
-////		opcodetype opcodeRet;
-////		CScriptBase::const_iterator pc = input.scriptSig.begin();
-////		if (!input.scriptSig.GetOp(pc, opcodeRet, vchRet)) {
-////			result += "get_input_type = Custom Script, no script sig\n";
-////			return CustomInput;
-////		};
-////	   
-////		int r = test_ecdsa_sig(vchRet, result);
-////		if (r) {
-////			result += "get_input_type = LEGACY\n";
-////			return Legacy;
-////		}
-////	}
-////	
-////	result += "get_input_type = Custom Script, fall through\n";
-////	return CustomInput;
-////}
-
 InputScriptType get_input_type(CTxIn input, std::vector<unsigned char>& vchRet, std::string& result)
 {
     Consensus::Params consensusParams;
@@ -675,21 +617,3 @@ long int from_varint(std::vector<unsigned char>& transaction_bytes, int& index, 
 	long int value = binary_to_long_int(r);
     return value;
 }
-
-////std::vector<unsigned char> script_to_bytes(CScript script) 
-////{
-////	std::vector<unsigned char> result; 
-
-////	CScriptBase::const_iterator pc = script.begin();
-////	while (pc < script.end()) 
-////	{   
-////		std::vector<unsigned char> vchRet;
-////		opcodetype opcodeRet;
-////		script.GetOp(pc, opcodeRet, vchRet);
-////		result.push_back(opcodeRet);
-////		if (!vchRet.empty()) {
-////			result.insert(result.end(),	vchRet.begin(), vchRet.end());
-////		}
-////	}
-////	return result;
-////}
