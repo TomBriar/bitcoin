@@ -471,11 +471,8 @@ static int compress_signature(std::vector<unsigned char>& vchRet, std::string& r
     return 0;
 }
 
-InputScriptType get_input_type(CTxIn input, std::vector<unsigned char>& vchRet, std::string& result)
+InputScriptType get_input_type(CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet, std::string& result)
 {
-    Consensus::Params consensusParams;
-    uint256 block_hash;
-    CTransactionRef tx = GetTransaction(NULL, NULL, input.prevout.hash, consensusParams, block_hash);
     CScript scriptPubKey = (*tx).vout.at(input.prevout.n).scriptPubKey;
 	
     /* P2SH and P2WSH are uncompressable */

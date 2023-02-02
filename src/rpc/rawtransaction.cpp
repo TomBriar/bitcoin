@@ -439,6 +439,7 @@ static RPCHelpMan compressrawtransaction()
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
         {
+			std::cout << "HHHhiIII";
             RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VBOOL});
 
             CMutableTransaction mtx, rmtx;
@@ -536,13 +537,17 @@ static RPCHelpMan compressrawtransaction()
     		if (!coinbase) {
     			bool input_type_identical = true;
 				std::vector<unsigned char> input_bytes;
-    			InputScriptType input_type = get_input_type(mtx.vin.at(0), input_bytes, result);
+				Consensus::Params consensusParams;
+				uint256 block_hash;
+				CTransactionRef tx = GetTransaction(NULL, NULL, mtx.vin.at(0).prevout.hash, consensusParams, block_hash);
+    			InputScriptType input_type = get_input_type(mtx.vin.at(0), tx, input_bytes, result);
     			inputs.push_back(std::make_tuple(input_type, input_bytes));
 
     			int input_length = mtx.vin.size();
     			for (int input_index = 1; input_index < input_length; input_index++) {
 					std::vector<unsigned char> input_bytes_x;
-    				InputScriptType input_type_x = get_input_type(mtx.vin.at(input_index), input_bytes_x, result);
+					CTransactionRef tx_x = GetTransaction(NULL, NULL, mtx.vin.at(input_index).prevout.hash, consensusParams, block_hash);
+    				InputScriptType input_type_x = get_input_type(mtx.vin.at(input_index), tx_x, input_bytes_x, result);
     				if (input_type != input_type_x) {
     					input_type_identical = false;
     				}
