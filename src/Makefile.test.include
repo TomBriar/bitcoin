@@ -85,7 +85,7 @@ BITCOIN_TESTS =\
   test/coins_tests.cpp \
   test/coinstatsindex_tests.cpp \
   test/compilerbug_tests.cpp \
-  test/compress_tests.cpp \
+  test/compression_tests.cpp \
   test/crypto_tests.cpp \
   test/cuckoocache_tests.cpp \
   test/dbwrapper_tests.cpp \
@@ -249,6 +249,7 @@ test_fuzz_fuzz_SOURCES = \
  test/fuzz/chain.cpp \
  test/fuzz/checkqueue.cpp \
  test/fuzz/coins_view.cpp \
+ test/fuzz/compression_roundtrip.cpp \
  test/fuzz/connman.cpp \
  test/fuzz/crypto.cpp \
  test/fuzz/crypto_aes256.cpp \
@@ -331,6 +332,8 @@ test_fuzz_fuzz_SOURCES = \
  test/fuzz/timedata.cpp \
  test/fuzz/torcontrol.cpp \
  test/fuzz/transaction.cpp \
+ test/fuzz/tx_compression.cpp \
+ test/fuzz/tx_decompression.cpp \
  test/fuzz/tx_in.cpp \
  test/fuzz/tx_out.cpp \
  test/fuzz/tx_pool.cpp \

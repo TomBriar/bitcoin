@@ -84,7 +84,6 @@
 
 #include <numeric>
 #include <stdint.h>
-
 #include <univalue.h>
 
 
@@ -379,20 +378,12 @@ void SignTransactionResultToJSON(CMutableTransaction& mtx, bool complete, const 
     }
 }
 
-long int binary_to_long_int(std::string binary)
+int binary_to_int(std::string binary)
 {
-    long int i_byte = 0;
-    int length = binary.length();
-    for (int x = 0; x < length; x++) {
-        if (binary.substr(x, 1) == "1") {
-            i_byte += pow(2, ((length-1)-x));
-        } 
-    }
-    return i_byte;
-}
-
-int32_t binary_to_int(std::string binary)
-{
+	std::cout << "bintest: " << binary.size() << " >= " << floor(log2(INT_MAX))+1 << std::endl;
+	if (binary.size() >= floor(log2(INT_MAX))+1) {
+		throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Binary String Interpretation larger then MAX_INT");
+	}
     int i_byte = 0;
     int length = binary.length();
     for (int x = 0; x < length; x++) {
@@ -423,7 +414,7 @@ std::string binary_to_hex(std::string binary)
     return hex;
 }
 
-std::string int_to_hex(int32_t byte)
+std::string int_to_hex(int64_t byte)
 {
     std::string hex;
     std::stringstream stream;
@@ -438,9 +429,10 @@ std::string int_to_hex(int32_t byte)
 int get_first_push_bytes(std::vector<unsigned char>& data, CScript script) 
 {
     opcodetype opcodeRet;
-	data.clear();
 
+	data.clear();
     CScriptBase::const_iterator pc = script.begin();
+
     while (pc < script.end()) 
     {   
         script.GetOp(pc, opcodeRet, data);
@@ -451,10 +443,10 @@ int get_first_push_bytes(std::vector<unsigned char>& data, CScript script)
     return 0;
 }
 
-static int compress_signature(std::vector<unsigned char>& vchRet, std::string& result)
+static int compress_signature(secp256k1_context* ctx, std::vector<unsigned char>& vchRet)
 {
-    secp256k1_context* ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
-	result += "sig to compress = "+HexStr(vchRet)+"\n";
+	std::cout << "sig to compress = " << HexStr(vchRet) << std::endl;
+//TODO: if (!vchRet) return 0;
     
     unsigned char hash_type = vchRet.back();
     int length = vchRet.size()-1;
@@ -471,45 +463,45 @@ static int compress_signature(std::vector<unsigned char>& vchRet, std::string& r
     return 0;
 }
 
-InputScriptType get_input_type(CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet, std::string& result)
+InputScriptType get_input_type(secp256k1_context* ctx, CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet)
 {
     CScript scriptPubKey = (*tx).vout.at(input.prevout.n).scriptPubKey;
 	
     /* P2SH and P2WSH are uncompressable */
     if (scriptPubKey.IsPayToScriptHash() || scriptPubKey.IsPayToWitnessScriptHash()) {
-        result += "get_input_type = P2SH|P2PWSH\n";
+        std::cout << "get_input_type = P2SH|P2PWSH" << std::endl;
         return CustomInput;
     }
 
 	if (scriptPubKey.IsPayToPublicKeyHash()) {
-        result += "get_input_type = Legacy\n";
-		get_first_push_bytes(vchRet, input.scriptSig);
-		int r =	compress_signature(vchRet, result);
-		result += "testing = "+std::to_string(r)+"\n";
+        std::cout << "get_input_type = Legacy" << std::endl;
+		std::cout << "input.scriptSig = " << HexStr(input.scriptSig) << std::endl;
+		assert(get_first_push_bytes(vchRet, input.scriptSig));
+		int r =	compress_signature(ctx, vchRet);
 		if (!r) return CustomInput;
 		return Legacy;
 	}
 
 	if (scriptPubKey.IsPayToWitnessPublicKeyHash()) {
-        result += "get_input_type = Segwit\n";
+        std::cout << "get_input_type = Segwit" << std::endl;
 		vchRet = input.scriptWitness.stack.at(0);
-		int r =	compress_signature(vchRet, result);
+		int r =	compress_signature(ctx, vchRet);
 		if (!r) return CustomInput;
 		return Segwit;
 	}
 
 	if (scriptPubKey.IsPayToTaproot()) {
-        result += "get_input_type = TAPROOT\n";
+        std::cout << "get_input_type = TAPROOT" << std::endl;
 		vchRet = input.scriptWitness.stack.at(0);
 		return Taproot;
 	}
 	
-	result += "get_input_type = Custom Script, fall through\n";
+	std::cout << "get_input_type = Custom Script, fall through" << std::endl;
 	return CustomInput;
 }
 
 
-OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet, std::string& result)
+OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet)
 {
 	get_first_push_bytes(vchRet, script_pubkey);
 
@@ -557,60 +549,83 @@ std::string hex_to_binary(std::string hex)
     return std::bitset<8>(byte).to_string();
 }
 
-std::vector<unsigned char> to_varint(long int intager)
+std::vector<unsigned char> to_varint(uint64_t value)
 {
-	std::vector<unsigned char> result;
-    int index = 0;
-    std::string binary = std::bitset<64>(intager).to_string();
-    binary.erase(0, binary.find_first_not_of('0'));
-    if (binary.length() == 0) {
-		result.push_back(0x00);
-        return result;
-    }
-    float fint = binary.length();
-    fint /= 7;
-    int varlen = ceil(fint);
-    int padding = (7*varlen)-binary.length();
-    if (varlen > 1) {
-		unsigned char byte = 0x80;
-		byte |=	binary_to_int(binary.substr(0, (7-padding)));
-		result.push_back(byte);
+	CDataStream varint_ss(SER_DISK, 0);
+	varint_ss << VARINT(value);
+	std::vector<std::byte> varint(varint_ss.size());
+	varint_ss.read(varint);
+	std::vector<unsigned char> uc_varint = reinterpret_cast<std::vector<unsigned char> &&> (varint);
+	return uc_varint;
+			
+////std::vector<unsigned char> result;
+////int index = 0;
+////std::string binary = std::bitset<64>(intager).to_string();
+////binary.erase(0, binary.find_first_not_of('0'));
+////if (binary.length() == 0) {
+////	result.push_back(0x00);
+////    return result;
+////}
+////float fint = binary.length();
+////fint /= 7;
+////int varlen = ceil(fint);
+////int padding = (7*varlen)-binary.length();
+////if (varlen > 1) {
+////	unsigned char byte = 0x80;
+////	byte |=	binary_to_int(binary.substr(0, (7-padding)));
+////	result.push_back(byte);
 
-        index += 7-padding;
-        for (int i = 1; i < varlen; i++) {
-			byte = 0;
-            if (i+1 != varlen) {
-				byte |= 0x80;
-			}
-            byte |= binary_to_int(binary.substr(index, 7));
-			result.push_back(byte);
-            index += 7;
-        }
-    } else {
-        unsigned char byte = 0;
-        byte |=	binary_to_int(binary);
-		result.push_back(byte);
-    }
-    return result;
+////    index += 7-padding;
+////    for (int i = 1; i < varlen; i++) {
+////		byte = 0;
+////        if (i+1 != varlen) {
+////			byte |= 0x80;
+////		}
+////        byte |= binary_to_int(binary.substr(index, 7));
+////		result.push_back(byte);
+////        index += 7;
+////    }
+////} else {
+////    unsigned char byte = 0;
+////    byte |=	binary_to_int(binary);
+////	result.push_back(byte);
+////}
+////return result;
 }
 
-long int from_varint(std::vector<unsigned char>& transaction_bytes, int& index, std::string& result) 
+void checkSize(int size, int index) {
+	std::cout << "size = " << size << std::endl;
+	std::cout << "index = " << index << std::endl;
+	if (size <= index || index < 0) {
+		throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Compressed TX malformed or truncated");
+	}
+}
+
+uint64_t from_varint(std::vector<unsigned char>& transaction_bytes, int& index) 
 {
-	std::string r;
-    bool end = false;
-    for (; ;) {
-    	unsigned char byte = transaction_bytes.at(index);
-		result += "byte = "+int_to_hex(byte)+"\n";
-        index += 1;
-        std::string binary = std::bitset<8>(byte).to_string();
-        if (binary.substr(0, 1) == "0") {
-            end = true;
-        }
-        r += binary.substr(1, 7);
-        if (end) {
-            break;
-        }
-    }
-	long int value = binary_to_long_int(r);
-    return value;
+	std::vector<std::byte> b_varint = reinterpret_cast<std::vector<std::byte> &&> (transaction_bytes);
+	CDataStream varint_ss(SER_DISK, 0);
+	varint_ss.write(b_varint);
+	uint64_t value = std::numeric_limits<uint64_t>::max();
+	varint_ss >> VARINT(value);
+	return value;
+	
+////std::string r;
+////bool end = false;
+////std::cout << "varint = " << std::endl;
+////for (; ;) {
+////	checkSize(transaction_bytes.size(), index+1);
+////	unsigned char byte = transaction_bytes.at(index);
+////	std::cout << "	: " << int_to_hex(byte) << std::endl;
+////    index += 1;
+////    std::string binary = std::bitset<8>(byte).to_string();
+////    if (binary.substr(0, 1) == "0") {
+////        end = true;
+////    }
+////    r += binary.substr(1, 7);
+////    if (end) {
+////        break;
+////    }
+////}
+////return binary_to_int(r);
 }

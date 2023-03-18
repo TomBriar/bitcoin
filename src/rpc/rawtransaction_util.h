@@ -10,6 +10,7 @@
 #include <optional>
 #include <node/blockstorage.h>
 #include <node/transaction.h>
+#include <secp256k1.h>
 using node::GetTransaction;
 
 struct bilingual_str;
@@ -50,25 +51,25 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
 /** Create a transaction from univalue parameters */
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf);
 
-long int binary_to_long_int(std::string binary);
-
-int32_t binary_to_int(std::string binary);
+int binary_to_int(std::string binary);
 
 std::string binary_to_hex(std::string binary);
 
-std::string int_to_hex(int32_t byte);
+std::string int_to_hex(int64_t byte);
 
 std::string hex_to_binary(std::string hex);
 
-std::vector<unsigned char> to_varint(long int intager);
+std::vector<unsigned char> to_varint(uint64_t value);
 
-long int from_varint(std::vector<unsigned char>& transaction_bytes, int& index, std::string& result);
+void checkSize(int size, int index);
 
-InputScriptType get_input_type(CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet, std::string& result);
+uint64_t from_varint(std::vector<unsigned char>& transaction_bytes, int& index);
+
+InputScriptType get_input_type(secp256k1_context* ctx, CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet);
+
+OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet);
 
 int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
-
-OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet, std::string& result);
 
 std::vector<unsigned char> hex_to_bytes(std::string hex);
 

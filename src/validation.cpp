@@ -3906,6 +3906,7 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
         }
         if (!ret) {
             GetMainSignals().BlockChecked(*block, state);
+        	std::cout << "ActivateBestChain failed (" << state.ToString() << ")" << std::endl;
             return error("%s: AcceptBlock FAILED (%s)", __func__, state.ToString());
         }
     }
@@ -3914,6 +3915,7 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
 
     BlockValidationState state; // Only used to report errors, not invalidity - ignore it
     if (!ActiveChainstate().ActivateBestChain(state, block)) {
+        std::cout << "ActivateBestChain failed (" << state.ToString() << ")" << std::endl;
         return error("%s: ActivateBestChain failed (%s)", __func__, state.ToString());
     }
 
