@@ -21,8 +21,6 @@ class Coin;
 class COutPoint;
 class SigningProvider;
 
-enum OutputScriptType { CustomOutput=1, P2PK, P2SH, P2PKH, P2WSH, P2WPKH, P2TR};
-enum InputScriptType { CustomInput=0, Legacy, Segwit, Taproot };
 const uint32_t SEQUENCE_F0 = 0xFFFFFFF0;
 const uint32_t SEQUENCE_FE = 0xFFFFFFFE;
 const uint32_t SEQUENCE_FF = 0xFFFFFFFF;
@@ -51,27 +49,27 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
 /** Create a transaction from univalue parameters */
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf);
 
-int binary_to_int(std::string binary);
+////int binary_to_int(std::string binary);
 
-std::string binary_to_hex(std::string binary);
+////std::string binary_to_hex(std::string binary);
 
-std::string int_to_hex(int64_t byte);
+////std::string int_to_hex(int64_t byte);
 
-std::string hex_to_binary(std::string hex);
+////std::string hex_to_binary(std::string hex);
 
-std::vector<unsigned char> to_varint(uint64_t value);
+////std::vector<unsigned char> to_varint(uint64_t value);
 
-void checkSize(int size, int index);
+////void checkSize(int size, int index);
 
-uint64_t from_varint(std::vector<unsigned char>& transaction_bytes, int& index);
+////uint64_t from_varint(std::vector<unsigned char>& transaction_bytes, int& index);
 
-InputScriptType get_input_type(secp256k1_context* ctx, CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet);
+////bool get_input_type(secp256k1_context* ctx, CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet);
 
-OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet);
+////OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet);
 
-int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
+////int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
 
-std::vector<unsigned char> hex_to_bytes(std::string hex);
+////std::vector<unsigned char> hex_to_bytes(std::string hex);
 
 
 

@@ -65,6 +65,9 @@ std::vector<unsigned char> ToByteVector(const T& in)
     return std::vector<unsigned char>(in.begin(), in.end());
 }
 
+/** Script types */
+enum scripttype{Custom=0, P2PK, P2SH, P2PKH, P2WSH, P2WPKH, P2TR};
+
 /** Script opcodes */
 enum opcodetype
 {
@@ -437,6 +440,7 @@ public:
     explicit CScript(int64_t b) { operator<<(b); }
     explicit CScript(opcodetype b)     { operator<<(b); }
     explicit CScript(const CScriptNum& b) { operator<<(b); }
+	explicit CScript(const std::vector<unsigned char>& payload, scripttype scriptType);
     // delete non-existent constructor to defend against future introduction
     // e.g. via prevector
     explicit CScript(const std::vector<unsigned char>& b) = delete;
@@ -536,6 +540,7 @@ public:
     bool IsPayToWitnessScriptHash() const;
     bool IsPayToWitnessPublicKeyHash() const;
     bool IsPayToTaproot() const;
+	scripttype GetScriptType() const;
 
     bool IsWitnessProgram(int& version, std::vector<unsigned char>& program) const;
 
