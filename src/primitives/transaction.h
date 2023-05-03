@@ -25,6 +25,7 @@
 #include <streams.h>
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
+#include <sighash.h>
 
 /**
  * A flag that is ORed into the protocol version to designate that a transaction
@@ -372,6 +373,8 @@ public:
     }
 };
 
+struct CCompressedTransaction;
+
 /** A mutable version of CTransaction. */
 struct CMutableTransaction
 {
@@ -382,6 +385,7 @@ struct CMutableTransaction
 
     explicit CMutableTransaction();
     explicit CMutableTransaction(const CTransaction& tx);
+	explicit CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs);
 
     template <typename Stream>
     inline void Serialize(Stream& s) const {

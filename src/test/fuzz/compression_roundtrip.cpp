@@ -12,7 +12,6 @@
 #include <policy/policy.h>
 #include <policy/settings.h>
 #include <primitives/transaction.h>
-#include <txdecompress.h>
 #include <streams.h>
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
@@ -67,6 +66,7 @@ using node::CBlockTemplate;
 using node::ReadBlockFromDisk;
 using node::GetTransaction;
 using node::RegenerateCommitments;
+using node::FindCoins;
 
 namespace {
 	class SecpContext {
@@ -105,6 +105,9 @@ namespace {
 			return CCompressedTxId(block_height, block_index);
 		}
 
+		void GetCoins(std::map<COutPoint, Coin>& map) {
+			FindCoins(m_node, map);
+		}
 
     	UniValue CallRPC(const std::string& rpc_method, const std::vector<std::string>& arguments)
     	{   
@@ -312,7 +315,7 @@ namespace {
 	secp256k1_context* ctx = nullptr;
 	SecpContext secp_context = SecpContext();
 	CompressionRoundtripFuzzTestingSetup* rpc = nullptr;
-	std::vector<std::tuple<uint256, secp256k1_keypair, uint32_t, int, CScript, CCompressedTxId>> unspent_transactions;
+	std::vector<std::tuple<uint256, secp256k1_keypair, uint32_t, int, CScript, uint256, CCompressedTxId>> unspent_transactions;
 	std::vector<std::tuple<uint256, secp256k1_keypair, uint32_t, int>> coinbase_transactions;
 	CompressionRoundtripFuzzTestingSetup* InitializeCompressionRoundtripFuzzTestingSetup()
 	{
@@ -358,7 +361,7 @@ void compression_roundtrip_initialize()
 		CBlock coinbase_block =	rpc->CreateAndProcessBlock(txins, coinbase_scriptPubKey);
 		assert(rpc->IsTopBlock(coinbase_block));
 		uint256 txid = coinbase_block.vtx.at(0)->GetHash();
-		unspent_transactions.push_back(std::make_tuple(txid, coinbase_kp, 0, coinbase_block.vtx.at(0)->vout.at(0).nValue, coinbase_scriptPubKey, rpc->GetCompressedTxId(txid, coinbase_block)));
+		unspent_transactions.push_back(std::make_tuple(txid, coinbase_kp, 0, coinbase_block.vtx.at(0)->vout.at(0).nValue, coinbase_scriptPubKey, txid, rpc->GetCompressedTxId(txid, coinbase_block)));
 	}
 
 	//Generate Transactions For Compression Inputs
@@ -416,7 +419,7 @@ void compression_roundtrip_initialize()
 		assert(rpc->IsTopBlock(main_block));
 		for (auto const& out : outs) {
 			uint256 txid = mtx.GetHash();
-			unspent_transactions.push_back(std::make_tuple(txid,  std::get<0>(out), std::get<1>(out), std::get<2>(out), std::get<3>(out), rpc->GetCompressedTxId(txid, main_block)));
+			unspent_transactions.push_back(std::make_tuple(txid,  std::get<0>(out), std::get<1>(out), std::get<2>(out), std::get<3>(out), txid, rpc->GetCompressedTxId(txid, main_block)));
 		}
 	}
 }
@@ -432,7 +435,8 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 
 	uint32_t total = 0;
 	std::vector<CScript> input_scripts;
-	std::vector<CCompressedTxId> txids;
+	std::vector<uint256> txids;
+	std::vector<CCompressedTxId> compressed_txids;
 	LIMITED_WHILE(total == 0 || fdp.ConsumeBool(), 10000) {
 		int index = fdp.ConsumeIntegralInRange<int>(0, unspent_transactions.size()-1);
 		uint256 txid = std::get<0>(unspent_transactions.at(index));
@@ -440,6 +444,7 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 		uint32_t vout = std::get<2>(unspent_transactions.at(index));
 		input_scripts.push_back(std::get<4>(unspent_transactions.at(index)));
 		txids.push_back(std::get<5>(unspent_transactions.at(index)));
+		compressed_txids.push_back(std::get<6>(unspent_transactions.at(index)));
 		
 		total += std::get<3>(unspent_transactions.at(index));
 
@@ -472,11 +477,19 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 
 	std::cout << "tx: " << CTransaction(mtx).ToString() << std::endl;
 	//compress
-////const CTransaction tx = CTransaction(mtx);
-////CCompressedTransaction compressed_transaction = CCompressedTransaction(tx, txids, input_scripts);
-////std::cout << "compressed_tx: " << compressed_transaction.ToString() << std::endl;
-////CTransaction new_tx = CTransaction(compressed_transaction);
-////std::cout << "uncompressed_tx: " << new_tx.ToString() << std::endl;
+	const CTransaction tx = CTransaction(mtx);
+	CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
+	std::cout << "compressed_tx: " << compressed_transaction.ToString() << std::endl;
+
+	std::map<COutPoint, Coin> coins;
+	for (size_t index = 0; index < compressed_transaction.vin.size(); index++) {
+		coins[COutPoint(txids.at(index), compressed_transaction.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout.
+	}
+	rpc->GetCoins(coins);
+	std::vector<CTxOut> outs;
+	transform(coins.begin(), coins.end(), back_inserter(outs), [](const auto& val){return val.second.out;});
+	CTransaction new_tx = CTransaction(CMutableTransaction(ctx, compressed_transaction, txids, outs));
+	std::cout << "uncompressed_tx: " << new_tx.ToString() << std::endl;
 
 
 
