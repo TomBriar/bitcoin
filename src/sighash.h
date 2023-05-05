@@ -1,6 +1,10 @@
 #ifndef BITCOIN_SIGHASH_H
 #define BITCOIN_SIGHASH_H
 
+#include <script/script.h>
+#include <uint256.h>
+#include <uint256.h>
+#include <consensus/amount.h>
 //struct CMutableTransaction;
 
 template <class T>

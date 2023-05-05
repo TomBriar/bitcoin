@@ -603,6 +603,8 @@ libbitcoin_consensus_a_SOURCES = \
   prevector.h \
   primitives/block.cpp \
   primitives/block.h \
+  sighash.cpp \
+  sighash.h \
   primitives/transaction.cpp \
   primitives/transaction.h \
   pubkey.cpp \
@@ -923,6 +925,7 @@ libbitcoinkernel_la_SOURCES = \
   policy/settings.cpp \
   pow.cpp \
   primitives/block.cpp \
+  sighash.cpp \
   primitives/transaction.cpp \
   pubkey.cpp \
   random.cpp \
