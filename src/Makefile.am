@@ -250,6 +250,7 @@ BITCOIN_CORE_H = \
   script/signingprovider.h \
   script/standard.h \
   shutdown.h \
+  sighash.h \
   signet.h \
   streams.h \
   support/allocators/secure.h \
@@ -421,6 +422,7 @@ libbitcoin_node_a_SOURCES = \
   rpc/txoutproof.cpp \
   script/sigcache.cpp \
   shutdown.cpp \
+  sighash.cpp \
   signet.cpp \
   timedata.cpp \
   torcontrol.cpp \
@@ -937,6 +939,7 @@ libbitcoinkernel_la_SOURCES = \
   script/sigcache.cpp \
   script/standard.cpp \
   shutdown.cpp \
+  sighash.cpp \
   signet.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \
