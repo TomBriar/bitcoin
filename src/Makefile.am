@@ -250,7 +250,6 @@ BITCOIN_CORE_H = \
   script/signingprovider.h \
   script/standard.h \
   shutdown.h \
-  sighash.h \
   signet.h \
   streams.h \
   support/allocators/secure.h \
@@ -422,7 +421,6 @@ libbitcoin_node_a_SOURCES = \
   rpc/txoutproof.cpp \
   script/sigcache.cpp \
   shutdown.cpp \
-  sighash.cpp \
   signet.cpp \
   timedata.cpp \
   torcontrol.cpp \
@@ -605,10 +603,10 @@ libbitcoin_consensus_a_SOURCES = \
   prevector.h \
   primitives/block.cpp \
   primitives/block.h \
-  sighash.cpp \
-  sighash.h \
   primitives/transaction.cpp \
   primitives/transaction.h \
+  primitives/compression.cpp \
+  primitives/compression.h \
   pubkey.cpp \
   pubkey.h \
   script/bitcoinconsensus.cpp \
@@ -927,8 +925,8 @@ libbitcoinkernel_la_SOURCES = \
   policy/settings.cpp \
   pow.cpp \
   primitives/block.cpp \
-  sighash.cpp \
   primitives/transaction.cpp \
+  primitives/compression.cpp \
   pubkey.cpp \
   random.cpp \
   randomenv.cpp \
@@ -939,7 +937,6 @@ libbitcoinkernel_la_SOURCES = \
   script/sigcache.cpp \
   script/standard.cpp \
   shutdown.cpp \
-  sighash.cpp \
   signet.cpp \
   support/cleanse.cpp \
   support/lockedpool.cpp \

@@ -59,6 +59,7 @@
 
 #include <interfaces/chain.h>
 #include <index/txindex.h>
+#include <primitives/compression.h>
 
 using node::BlockManager;
 using node::BlockAssembler;
@@ -87,7 +88,6 @@ namespace {
 		CompressionRoundtripFuzzTestingSetup(const std::string& chain_name, const std::vector<const char*>& extra_args) : TestChain100Setup{chain_name, extra_args} 
 		{}
 
-		//TODO: replace with known values
 		CCompressedTxId GetCompressedTxId(uint256 txid, CBlock block) {
 			ChainstateManager& chainman = EnsureChainman(m_node);
             Chainstate& active_chainstate = chainman.ActiveChainstate();
@@ -109,149 +109,99 @@ namespace {
 			FindCoins(m_node, map);
 		}
 
-    	UniValue CallRPC(const std::string& rpc_method, const std::vector<std::string>& arguments)
-    	{   
-    		JSONRPCRequest request;
-    		request.context = &m_node;
-    		request.strMethod = rpc_method;
-    		try {
-    			request.params = RPCConvertValues(rpc_method, arguments);
-    		} catch (const std::runtime_error&) {
-    			return NullUniValue;
-    		}   
-    		return tableRPC.execute(request);
-    	}
-
 		bool IsTopBlock(CBlock block) {
 			LOCK(cs_main);
 			if (m_node.chainman->ActiveChain().Tip()->GetBlockHash() == block.GetHash()) return true;
-////		std::cout << "Checking block: " << std::endl;
-////		std::cout << "\t" << "Block Tip = " << m_node.chainman->ActiveChain().Tip()->GetBlockHash() << std::endl;
-////		std::cout << "\t" << "Block Hash = " << block.GetHash() << std::endl;
 			return false;
 		}
 
-		/* Compressed P2PKH = 1, Uncompressed P2PKH = 2, P2WPKH = 3, P2TR = 4, P2SH = 5, P2WSH = 6 */
-		CScript GenerateDestination(secp256k1_context* ctx, secp256k1_keypair kp, int script_type = 1){
-			assert(script_type > 0 && script_type < 6);
+		CScript GenerateDestination(secp256k1_context* ctx, secp256k1_keypair kp, int scriptInt, std::vector<unsigned char> custom_script_bytes){
 			secp256k1_pubkey pubkey;
 			assert(secp256k1_keypair_pub(ctx, &pubkey, &kp));
+			std::vector<std::vector<unsigned char>> vSolutions;
+			TxoutType scriptType = TxoutType::NONSTANDARD;
+			bool pc = true;
+			//TODO: use scripthashes
+			switch(scriptInt) {
+				case 0:
+					scriptType = TxoutType::PUBKEY;
+					break;
+				case 1:
+					scriptType = TxoutType::PUBKEYHASH;
+					break;
+				case 2:
+					//scriptType = TxoutType::SCRIPTHASH;
+					scriptType = TxoutType::PUBKEYHASH;
+					break;
+				case 3:
+					scriptType = TxoutType::WITNESS_V0_KEYHASH;
+					break;
+				case 4:
+					//scriptType = TxoutType::WITNESS_V0_SCRIPTHASH;
+					scriptType = TxoutType::PUBKEYHASH;
+					break;
+				case 5:
+					scriptType = TxoutType::WITNESS_V1_TAPROOT;
+					break;
+				case 6:
+					scriptType = TxoutType::PUBKEYHASH;
+					pc = false;
+					break;
+			}
 
-			std::cout << "script_type " << script_type << std::endl;
-			if (script_type == 5) {
-				/* Serilize Compressed Pubkey */
-				std::vector<unsigned char> compressed_pubkey (33);
-				size_t c_size = 33;
-				secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &c_size, &pubkey, SECP256K1_EC_COMPRESSED);
-
-				/* Hash Compressed Pubkey */
-				uint160 compressed_pubkey_hash;
-				CHash160().Write(compressed_pubkey).Finalize(compressed_pubkey_hash);
-
-				/* Construct Compressed Script */
-				std::vector<unsigned char> compressed_script(25);
-				compressed_script[0] = 0x76;
-				compressed_script[1] = 0xa9;
-				compressed_script[2] = 0x14;
-				copy(compressed_pubkey_hash.begin(), compressed_pubkey_hash.end(), compressed_script.begin()+3);
-				compressed_script[23] = 0x88;
-				compressed_script[24] = 0xac;
-				
- 				/* Hash Script */
-				uint160 script_hash;
-				CHash160().Write(compressed_script).Finalize(script_hash);
-				
-				/* Construct Address */
-				std::vector<unsigned char> script(23);
-				script[0] = 0xa9;
-				script[1] = 0x14;
-				copy(script_hash.begin(), script_hash.end(), script.begin()+2);
-				script[22] = 0x87;
-				return CScript(script.begin(), script.end());
-			} else if (script_type == 1) {
-			/* Serilize Compressed Pubkey */
-				std::vector<unsigned char> compressed_pubkey (33);
-				size_t c_size = 33;
-				secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &c_size, &pubkey, SECP256K1_EC_COMPRESSED);
-
-				/* Hash Compressed Pubkey */
-				uint160 compressed_pubkey_hash;
-				CHash160().Write(compressed_pubkey).Finalize(compressed_pubkey_hash);
-
-				/* Construct Compressed ScriptPubKey */
-				std::vector<unsigned char> compressed_script(25);
-				compressed_script[0] = 0x76;
-				compressed_script[1] = 0xa9;
-				compressed_script[2] = 0x14;
-				copy(compressed_pubkey_hash.begin(), compressed_pubkey_hash.end(), compressed_script.begin()+3);
-				compressed_script[23] = 0x88;
-				compressed_script[24] = 0xac;
-				return CScript(compressed_script.begin(), compressed_script.end());
-			} else if (script_type == 2) {
-				/* Serilize Uncompressed Pubkey */
-				std::vector<unsigned char> uncompressed_pubkey (65);
-				size_t uc_size = 65;
-				secp256k1_ec_pubkey_serialize(ctx, &uncompressed_pubkey[0], &uc_size, &pubkey, SECP256K1_EC_UNCOMPRESSED);
-
-				/* Hash Uncompressed PubKey */
-				uint160 uncompressed_pubkey_hash;
-				CHash160().Write(uncompressed_pubkey).Finalize(uncompressed_pubkey_hash);
-
-				/* Construct Uncompressed Script */
-				std::vector<unsigned char> uncompressed_script(25);
-				uncompressed_script[0] = 0x76;
-				uncompressed_script[1] = 0xa9;
-				uncompressed_script[2] = 0x14;
-				copy(uncompressed_pubkey_hash.begin(), uncompressed_pubkey_hash.end(), uncompressed_script.begin()+3);
-				uncompressed_script[23] = 0x88;
-				uncompressed_script[24] = 0xac;
-				return CScript(uncompressed_script.begin(), uncompressed_script.end());
-			} else if (script_type == 3) {
-				/* Serilize Compressed Pubkey */
-				std::vector<unsigned char> compressed_pubkey (33);
-				size_t c_size = 33;
-				secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &c_size, &pubkey, SECP256K1_EC_COMPRESSED);
-
-				/* Hash Compressed Pubkey */
-				uint160 compressed_pubkey_hash;
-				CHash160().Write(compressed_pubkey).Finalize(compressed_pubkey_hash);
-
-				/* Construct Compressed Script */
-				std::vector<unsigned char> compressed_script(22);
-				compressed_script[0] = 0x00;
-				compressed_script[1] = 0x14;
-				copy(compressed_pubkey_hash.begin(), compressed_pubkey_hash.end(), compressed_script.begin()+2);
-				return CScript(compressed_script.begin(), compressed_script.end());
-			} else if (script_type == 6) {
-				/* Serilize Compressed Pubkey */
-				std::vector<unsigned char> compressed_pubkey (33);
-				size_t c_size = 33;
-				secp256k1_ec_pubkey_serialize(ctx, &compressed_pubkey[0], &c_size, &pubkey, SECP256K1_EC_COMPRESSED);
-
-				/* Hash Compressed Pubkey */
-				uint160 compressed_pubkey_hash;
-				CHash160().Write(compressed_pubkey).Finalize(compressed_pubkey_hash);
-
-				/* Construct Compressed Script */
-				std::vector<unsigned char> compressed_script(25);
-				compressed_script[0] = 0x76;
-				compressed_script[1] = 0xa9;
-				compressed_script[2] = 0x14;
-				copy(compressed_pubkey_hash.begin(), compressed_pubkey_hash.end(), compressed_script.begin()+3);
-				compressed_script[23] = 0x88;
-				compressed_script[24] = 0xac;
-				
- 				/* Hash Script */
-				uint256 script_hash;
-				CHash256().Write(compressed_script).Finalize(script_hash);
-				
-				/* Construct Address */
-				std::vector<unsigned char> script(34);
-				script[0] = 0x00;
-				script[1] = 0x20;
-				copy(script_hash.begin(), script_hash.end(), script.begin()+2);
-				return CScript(script.begin(), script.end());
-			} else if (script_type == 4) {
+			if (scriptType == TxoutType::PUBKEY) { 
+				std::vector<unsigned char> ucPubkey (65);
+				size_t ucSize = 65;
+				secp256k1_ec_pubkey_serialize(ctx, &ucPubkey[0], &ucSize, &pubkey, SECP256K1_EC_UNCOMPRESSED);
+				vSolutions.push_back(ucPubkey);
+			} else if (scriptType == TxoutType::PUBKEYHASH) {
+				if (pc) {
+					std::vector<unsigned char> cPubkey (33);
+					size_t cSize = 33;
+					secp256k1_ec_pubkey_serialize(ctx, &cPubkey[0], &cSize, &pubkey, SECP256K1_EC_COMPRESSED);
+					uint160 cpHash;
+					CHash160().Write(cPubkey).Finalize(cpHash);
+					std::vector<unsigned char> cpHashBytes(20);
+					copy(cpHash.begin(), cpHash.end(), cpHashBytes.begin());
+					vSolutions.push_back(cpHashBytes);
+				} else {
+					std::vector<unsigned char> ucPubkey (65);
+					size_t ucSize = 65;
+					secp256k1_ec_pubkey_serialize(ctx, &ucPubkey[0], &ucSize, &pubkey, SECP256K1_EC_UNCOMPRESSED);
+					uint160 ucpHash;
+					CHash160().Write(ucPubkey).Finalize(ucpHash);
+					std::vector<unsigned char> ucpHashBytes(20);
+					copy(ucpHash.begin(), ucpHash.end(), ucpHashBytes.begin());
+					vSolutions.push_back(ucpHashBytes);
+				}
+			} else if (scriptType == TxoutType::WITNESS_V0_SCRIPTHASH || scriptType == TxoutType::SCRIPTHASH) {
+				std::vector<unsigned char> cPubkey (33);
+				size_t cSize = 33;
+				secp256k1_ec_pubkey_serialize(ctx, &cPubkey[0], &cSize, &pubkey, SECP256K1_EC_COMPRESSED);
+				uint160 cpHash;
+				CHash160().Write(cPubkey).Finalize(cpHash);
+				std::vector<unsigned char> cpHashBytes(20);
+				copy(cpHash.begin(), cpHash.end(), cpHashBytes.begin());
+				std::vector<std::vector<unsigned char>> vSolutionsTemp;
+				vSolutionsTemp.push_back(cpHashBytes);
+				CTxDestination destination;
+				BuildDestination(vSolutionsTemp, scriptType, destination);
+				CScript p2pkh = GetScriptForDestination(destination);
+				uint160 scriptHash;
+				CHash160().Write(p2pkh).Finalize(scriptHash);
+				std::vector<unsigned char> script(20);
+				copy(scriptHash.begin(), scriptHash.end(), script.begin());
+				vSolutions.push_back(script);
+			} else if (scriptType == TxoutType::WITNESS_V0_KEYHASH) {
+				std::vector<unsigned char> cPubkey (33);
+				size_t cSize = 33;
+				secp256k1_ec_pubkey_serialize(ctx, &cPubkey[0], &cSize, &pubkey, SECP256K1_EC_COMPRESSED);
+				uint160 cpHash;
+				CHash160().Write(cPubkey).Finalize(cpHash);
+				std::vector<unsigned char> cpHashBytes(20);
+				copy(cpHash.begin(), cpHash.end(), cpHashBytes.begin());
+				vSolutions.push_back(cpHashBytes);
+			} else if (scriptType == TxoutType::WITNESS_V1_TAPROOT) {
 				/* Serilize XOnly Pubkey */
 				secp256k1_xonly_pubkey xonly_pubkey;
 				assert(secp256k1_xonly_pubkey_from_pubkey(ctx, &xonly_pubkey, NULL, &pubkey));
@@ -259,16 +209,18 @@ namespace {
 				secp256k1_xonly_pubkey_serialize(ctx, &xonly_pubkey_bytes[0], &xonly_pubkey);
 
 				/* Construct Script */
-				std::vector<unsigned char> taproot_script(34);
-				taproot_script[0] = 0x51;
-				taproot_script[1] = 0x20;
-				copy(xonly_pubkey_bytes.begin(), xonly_pubkey_bytes.end(), taproot_script.begin()+2);
-				return CScript(taproot_script.begin(), taproot_script.end());
+				std::vector<unsigned char> taprootScript(32);
+				copy(xonly_pubkey_bytes.begin(), xonly_pubkey_bytes.end(), taprootScript.begin());
+				vSolutions.push_back(taprootScript);
+			} else if (scriptType == TxoutType::NONSTANDARD) {
+				vSolutions.push_back(custom_script_bytes);
 			}
-			assert(false);
+			CTxDestination destination;
+			BuildDestination(vSolutions, scriptType, destination);
+			return GetScriptForDestination(destination);
 		}
-		bool SignTransaction(secp256k1_context* ctx, CMutableTransaction& mtx, std::vector<secp256k1_keypair> kps) {
 
+		bool SignTransaction(secp256k1_context* ctx, CMutableTransaction& mtx, std::vector<secp256k1_keypair> kps) {
 			FillableSigningProvider keystore;
 			int kps_length = kps.size();
 			for (int kps_index = 0; kps_index < kps_length; kps_index++) {
@@ -293,7 +245,6 @@ namespace {
 
 			// Parse the prevtxs array
 			//ParsePrevouts(NULL, &keystore, coins);
-			std::cout << "signing\n";
 
 			std::map<int, bilingual_str> input_errors;
 			::SignTransaction(mtx, &keystore, coins, SIGHASH_ALL, input_errors);
@@ -339,8 +290,9 @@ void compression_roundtrip_initialize()
 		std::vector<unsigned char> secret_key = frandom_ctx.randbytes(32);
 		assert(secp256k1_keypair_create(ctx, &coinbase_kp, &secret_key[0]));
 
-		int script_type = frandom_ctx.randrange(4)+1;
-		CScript coinbase_scriptPubKey =	rpc->GenerateDestination(ctx, coinbase_kp, script_type);
+		int script_type = frandom_ctx.randrange(7);
+		std::vector<unsigned char> custom_script_bytes = frandom_ctx.randbytes(128);
+		CScript coinbase_scriptPubKey =	rpc->GenerateDestination(ctx, coinbase_kp, script_type, custom_script_bytes);
 
 		std::vector<CMutableTransaction> txins;
 		CBlock coinbase_block =	rpc->CreateAndProcessBlock(txins, coinbase_scriptPubKey);
@@ -353,9 +305,9 @@ void compression_roundtrip_initialize()
 		secp256k1_keypair coinbase_kp;
 		std::vector<unsigned char> secret_key = frandom_ctx.randbytes(32);
 		assert(secp256k1_keypair_create(ctx, &coinbase_kp, &secret_key[0]));
-
-		int script_type = frandom_ctx.randrange(4)+1;
-		CScript coinbase_scriptPubKey =	rpc->GenerateDestination(ctx, coinbase_kp, script_type);
+		int script_type = frandom_ctx.randrange(7);
+		std::vector<unsigned char> custom_script_bytes = frandom_ctx.randbytes(128);
+		CScript coinbase_scriptPubKey =	rpc->GenerateDestination(ctx, coinbase_kp, script_type, custom_script_bytes);
 
 		std::vector<CMutableTransaction> txins;
 		CBlock coinbase_block =	rpc->CreateAndProcessBlock(txins, coinbase_scriptPubKey);
@@ -395,8 +347,9 @@ void compression_roundtrip_initialize()
 			std::vector<unsigned char> secret_key = frandom_ctx.randbytes(32);
 			assert(secp256k1_keypair_create(ctx, &out_kp, &secret_key[0]));
 
-			int script_type = frandom_ctx.randrange(4)+1;
-			out.scriptPubKey = rpc->GenerateDestination(ctx, out_kp, script_type);
+			int script_type = frandom_ctx.randrange(7);
+			std::vector<unsigned char> custom_script_bytes = frandom_ctx.randbytes(128);
+			out.scriptPubKey = rpc->GenerateDestination(ctx, out_kp, script_type, custom_script_bytes);
 			mtx.vout.push_back(out);
 			outs.push_back(std::make_tuple(out_kp, index, amount, out.scriptPubKey));
 			index++;
@@ -410,8 +363,10 @@ void compression_roundtrip_initialize()
 		assert(secp256k1_keypair_create(ctx, &main_kp, &secret_key[0]));
 
 		CScript main_scriptPubKey;
-		int script_type = frandom_ctx.randrange(4)+1;
-		main_scriptPubKey = rpc->GenerateDestination(ctx, main_kp, script_type);
+
+		int script_type = frandom_ctx.randrange(7);
+		std::vector<unsigned char> custom_script_bytes = frandom_ctx.randbytes(128);
+		main_scriptPubKey = rpc->GenerateDestination(ctx, main_kp, script_type, custom_script_bytes);
 
 		std::vector<CMutableTransaction> txins;
 		txins.push_back(mtx);
@@ -430,6 +385,7 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 	FuzzedDataProvider fdp(buffer.data(), buffer.size());
 	std::vector<secp256k1_keypair> keypairs;
 	CMutableTransaction mtx;
+
 	mtx.nVersion = fdp.ConsumeIntegral<uint32_t>();
 	mtx.nLockTime = fdp.ConsumeIntegral<uint8_t>();
 
@@ -437,8 +393,15 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 	std::vector<CScript> input_scripts;
 	std::vector<uint256> txids;
 	std::vector<CCompressedTxId> compressed_txids;
-	LIMITED_WHILE(total == 0 || fdp.ConsumeBool(), 10000) {
+	std::vector<int> used_indexs;
+
+
+	// GENERATE INPUTS //
+	LIMITED_WHILE(total == 0 || fdp.ConsumeBool(), static_cast<unsigned char>(unspent_transactions.size()-1)) {
 		int index = fdp.ConsumeIntegralInRange<int>(0, unspent_transactions.size()-1);
+		if (std::find(used_indexs.begin(), used_indexs.end(), index) != used_indexs.end())
+			break;
+		used_indexs.push_back(index);
 		uint256 txid = std::get<0>(unspent_transactions.at(index));
 		keypairs.push_back(std::get<1>(unspent_transactions.at(index)));
 		uint32_t vout = std::get<2>(unspent_transactions.at(index));
@@ -454,10 +417,20 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 		mtx.vin.push_back(in);
 	}
 
+
+	// GENERATE OUTPUTS //
 	uint32_t remaining_amount = total;
+	bool sign = true;
 	LIMITED_WHILE(remaining_amount > 2000 && (fdp.ConsumeBool() || mtx.vout.size() == 0), 10000) {
 		CTxOut out;	
-		uint16_t amount = fdp.ConsumeIntegralInRange<uint16_t>(1, remaining_amount-1000);
+		uint32_t limit = pow(2, 16);
+		int range_amount;
+		if (remaining_amount > limit) {
+			range_amount = limit-1000;
+		} else {
+			range_amount = remaining_amount-1000;
+		}
+		uint16_t amount = fdp.ConsumeIntegralInRange<uint16_t>(1, range_amount);
 		remaining_amount -= amount;
 		out.nValue = amount;
 
@@ -467,88 +440,47 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 		if (!secp256k1_keypair_create(ctx, &out_kp, &secret_key[0])) return;
 
 		CScript out_scriptPubKey;
-		int script_type = fdp.ConsumeIntegralInRange<uint32_t>(1, 4);
-		out.scriptPubKey = rpc->GenerateDestination(ctx, out_kp, script_type);
+
+		int script_type = fdp.ConsumeIntegralInRange<uint16_t>(0, 7);
+		if (script_type == 7) 
+			sign = false;
+		std::vector<unsigned char> custom_script_bytes = fdp.ConsumeBytes<uint8_t>(128);
+		out.scriptPubKey = rpc->GenerateDestination(ctx, out_kp, script_type, custom_script_bytes);
 		mtx.vout.push_back(out);
 	}
 	if (mtx.vout.size() == 0) return;
-
-	assert(rpc->SignTransaction(ctx, mtx, keypairs));
+	
+	if (sign)
+		assert(rpc->SignTransaction(ctx, mtx, keypairs));
 
 	std::cout << "tx: " << CTransaction(mtx).ToString() << std::endl;
-	//compress
-	const CTransaction tx = CTransaction(mtx);
-	CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
-	std::cout << "compressed_tx: " << compressed_transaction.ToString() << std::endl;
 
-	std::map<COutPoint, Coin> coins;
-	for (size_t index = 0; index < compressed_transaction.vin.size(); index++) {
-		coins[COutPoint(txids.at(index), compressed_transaction.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout.
-	}
-	rpc->GetCoins(coins);
-	std::vector<CTxOut> outs;
-	transform(coins.begin(), coins.end(), back_inserter(outs), [](const auto& val){return val.second.out;});
-	CTransaction new_tx = CTransaction(CMutableTransaction(ctx, compressed_transaction, txids, outs));
-	std::cout << "uncompressed_tx: " << new_tx.ToString() << std::endl;
+    const CTransaction tx = CTransaction(mtx);
+    CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
+    std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
+	
+	CCompressedTransaction uct = compressed_transaction;
 
-
-
-
-////CDataStream stream(SER_DISK, 0);	
+////CDataStream stream(SER_DISK, 0);
 ////compressed_transaction.Serialize(stream);
-////std::vector<std::byte> data(stream.size());
-////stream.read(data);
-////std::vector<unsigned char> uc_data = reinterpret_cast<std::vector<unsigned char> &&> (data);
-////std::string hex = HexStr(uc_data);
-////std::cout << "SERIALIZED: " << hex << std::endl;
-	assert(false);
-////std::vector<std::string> arguments;
-////std::string rpc_method;
-////UniValue rpc_result;
+////CCompressedTransaction uct = CCompressedTransaction();
+////uct.Unserialize(stream);
+////
+////std::cout << "uct: " << uct.ToString() << std::endl;
+////assert(compressed_transaction == uct);
+	
+	//TODO: serilize and unserilize
 
-////std::string serilized_transaction =	EncodeHexTx(CTransaction(mtx));
-////arguments.push_back(serilized_transaction);
-////rpc_method = "compressrawtransaction";
-////try {
-////	rpc_result = rpc->CallRPC(rpc_method, arguments);
-////} catch (const UniValue& json_rpc_error) {
-////	const std::string error_msg{find_value(json_rpc_error, "message").get_str()};
-////	std::cout << "ERROR: " << error_msg << std::endl;
-////	assert(false);
-////}
-
-////std::string compressed_transaction = rpc_result.get_str();
-
-//////decompress
-////rpc_method = "decompressrawtransaction";
-////arguments.clear();
-////arguments.push_back(compressed_transaction);
-////try {
-////	rpc_result = rpc->CallRPC(rpc_method, arguments);
-////} catch (const UniValue& json_rpc_error) {
-////	const std::string error_msg{find_value(json_rpc_error, "message").get_str()};
-////	std::cout << "ERROR: " << error_msg << std::endl;
-////	assert(false);
-////}
-////std::string decompressed_transaction = rpc_result.get_str();
-////std::cout << "decomp: " << decompressed_transaction << std::endl;
-////std::cout << "serili: " << serilized_transaction << std::endl;
-////if (decompressed_transaction != serilized_transaction) {
-////	if (decompressed_transaction.vin.size() != serilized_transaction.vin.size()) {
-////		std::cout << "vin sizes don't match" << std::endl;
-////	} else if (decompressed_transaction.vin != serilized_transaction.vin) {
-////		int vin_length = decompressed_transaction.vin.size();
-////		for (int vin_index = 0; vin_index < vin_length; vin_index++) {
-////			if (decompressed_transaction.vin.at(vin_index).prevout != serilized_transaction.vin.at(vin_index).prevout) {
-////				std::cout << "prevouts don't match (" << vin_index << ")" << std::endl;
-////			}
-////			if (decompressed_transaction.vin.at(vin_index).scriptSig != serilized_transaction.vin.at(vin_index).scriptSig) {
-////				std::cout << "scriptSig don't match (" << vin_index << "): " << std::endl;
-////				std::cout << "decomp " << HexStr(decompressed_transaction_vin.at(vin_index).scriptSig) << std::endl;
-////				std::cout << "seri " << HexStr(serilized_transaction.at(vin_index).scriptSig) << std::endl;
-////			}
-////		} 
-////	}
-////}
-////assert(decompressed_transaction == serilized_transaction);
+    std::map<COutPoint, Coin> coins;
+    for (size_t index = 0; index < uct.vin.size(); index++) {
+    	coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout.
+    }
+    rpc->GetCoins(coins);
+    std::vector<CTxOut> outs;
+	for (size_t index = 0; index < uct.vin.size(); index++) {
+    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n)].out);
+    }
+    CTransaction new_tx = CTransaction(CMutableTransaction(ctx, uct, txids, outs));
+    std::cout << "uctx: " << new_tx.ToString() << std::endl;
+	assert(tx == new_tx);
 }

@@ -172,6 +172,13 @@ constexpr bool IsPushdataOp(opcodetype opcode)
 TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned char>>& vSolutionsRet);
 
 /**
+ * Parse a vSolutions vector of vectors of unsigined char and a script type into a destination address. Assigns result to
+ * the addressRet parameter and returns true if successful. Currently only works for P2PK,
+ * P2PKH, P2SH, P2WPKH, and P2WSH scripts.
+ */
+bool BuildDestination(const std::vector<std::vector<unsigned char>>& vSolutions, const TxoutType& scriptType, CTxDestination& addressRet);
+
+/**
  * Parse a standard scriptPubKey for the destination address. Assigns result to
  * the addressRet parameter and returns true if successful. Currently only works for P2PK,
  * P2PKH, P2SH, P2WPKH, and P2WSH scripts.

@@ -9,6 +9,7 @@
 #include <consensus/amount.h>
 #include <prevector.h>
 #include <script/script.h>
+#include <secp256k1.h>
 #include <serialize.h>
 #include <uint256.h>
 
@@ -21,11 +22,6 @@
 #include <tuple>
 #include <utility>
 #include <vector>
-
-#include <streams.h>
-#include <secp256k1.h>
-#include <secp256k1_recovery.h>
-#include <sighash.h>
 
 /**
  * A flag that is ORed into the protocol version to designate that a transaction
@@ -418,112 +414,6 @@ struct CMutableTransaction
         return false;
     }
 };
-
-class CCompressedTxId
-{
-public:
-    uint32_t block_height;
-    uint32_t block_index;
-
-    explicit CCompressedTxId();
-    explicit CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index);
-};
-
-class CCompressedOutPoint
-{
-public:
-	CCompressedTxId txid;
-    uint32_t n;
-
-	explicit CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid);
-};
-
-class CCompressedTxIn
-{
-public:
-	std::vector<unsigned char> signature;
-	uint8_t hashType;
-    CCompressedOutPoint prevout;
-    uint32_t nSequence;
-	bool compressed;
-
-	explicit CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey);
-};
-
-
-class CCompressedTxOut
-{
-public:
-	std::vector<unsigned char> scriptPubKey;
-	scripttype scriptType;
-	bool compressed;
-    uint32_t nValue;
-
-	explicit CCompressedTxOut(const CTxOut& txout);
-};
-
-
-/** A compressed version of CTransaction. */
-struct CCompressedTransaction
-{
-    uint32_t nInputCount;
-    uint32_t nOutputCount;
-	uint32_t nVersion;
-	uint32_t nLockTime;
-	bool shortendLockTime;
-
-	CCompressedTransaction()
-	{
-		SetNull();
-	}
-
-	std::vector<CCompressedTxIn> vin;
-	std::vector<CCompressedTxOut> vout;
-
-    explicit CCompressedTransaction(secp256k1_context* ctx, const CTransaction tx, const std::vector<CCompressedTxId>& txids, const std::vector<CScript>& scriptPubKeys);
-
-	void SetNull()
-	{
-		nInputCount = 0;
-		nOutputCount = 0;
-		nVersion = 0;
-		nLockTime = 0;
-		shortendLockTime = false;
-		vin.clear();
-		vout.clear();
-	}
-
-	bool IsNull() const
-	{
-		return (nInputCount == 0);
-	}	
-
-////template <typename Stream>
-////inline void Serialize(Stream& s) const {
-////	std::cout << "ciin: " << this->ToString() << std::endl;
-////	std::cout << "testing: " << this->nInputCount << std::endl;
-////	s << this->nInputCount;  	
-////	s << this->nOutputCount;
-////	s << this->nVersion;
-////}
-
-////template <typename Stream>
-////inline void Unserialize(Stream& s) {
-////	s >> this->nInputCount;
-////	s >> this->nOutputCount;
-////	s >> this->nVersion;
-////}
-
-////template <typename Stream>
-////CCompressedTransaction(deserialize_type, Stream& s) {
-////    Unserialize(s);
-////}
-
-    bool IsMinimalInput() {return nInputCount < 4;}
-    bool IsMinimalOutput() {return nOutputCount < 4;}
-    std::string ToString() const;
-};
-
 
 typedef std::shared_ptr<const CTransaction> CTransactionRef;
 template <typename Tx> static inline CTransactionRef MakeTransactionRef(Tx&& txIn) { return std::make_shared<const CTransaction>(std::forward<Tx>(txIn)); }

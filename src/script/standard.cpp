@@ -234,12 +234,11 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
     return TxoutType::NONSTANDARD;
 }
 
-bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
-{
-    std::vector<valtype> vSolutions;
-    TxoutType whichType = Solver(scriptPubKey, vSolutions);
+bool BuildDestination(const std::vector<std::vector<unsigned char>>& vSolutions, const TxoutType& scriptType, CTxDestination& addressRet) {
+	if (!vSolutions.size()) 
+		return false;
 
-    switch (whichType) {
+	switch (scriptType) {
     case TxoutType::PUBKEY: {
         CPubKey pubKey(vSolutions[0]);
         if (!pubKey.IsValid())
@@ -275,6 +274,8 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         return true;
     }
     case TxoutType::WITNESS_UNKNOWN: {
+		if (!(vSolutions.size() > 1)) 
+			return false;
         WitnessUnknown unk;
         unk.version = vSolutions[0][0];
         std::copy(vSolutions[1].begin(), vSolutions[1].end(), unk.program);
@@ -288,6 +289,14 @@ bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
         return false;
     } // no default case, so the compiler can warn about missing cases
     assert(false);
+}
+
+bool ExtractDestination(const CScript& scriptPubKey, CTxDestination& addressRet)
+{
+    std::vector<valtype> vSolutions;
+    TxoutType scriptType = Solver(scriptPubKey, vSolutions);
+
+	return BuildDestination(vSolutions, scriptType, addressRet);
 }
 
 namespace {
