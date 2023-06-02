@@ -190,7 +190,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 				}
 				if (!tx.shortendLockTime || lockTimeFound) {lockTimeFound = true;} else {nLockTime += pow(2, 16);}
 			}
-		} else if (tx.vin.at(index).sigSigned) {
+		} else if (tx.vin.at(index).isSigned()) {
 			std::cout << "deserlize" << std::endl;
 			std::vector<unsigned char> sig(tx.vin.at(index).signature.size());
 			copy(tx.vin.at(index).signature.begin(), tx.vin.at(index).signature.end(), sig.begin());
@@ -222,16 +222,17 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 }
 
 CCompressedTxId::CCompressedTxId() : block_height(0), block_index(0) {};
-CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : block_height(block_height), block_index(block_index) {};
+CCompressedTxId::CCompressedTxId(const uint256& txid) : block_height(0), block_index(0), txid(txid), compressed(false) {};
+CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : block_height(block_height), block_index(block_index), compressed(true) {};
 
+CCompressedOutPoint::CCompressedOutPoint() : n(0) {};
 CCompressedOutPoint::CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid) : txid(txid), n(n) {}
 
+CCompressedTxIn::CCompressedTxIn() : hashType(0), nSequence(0), compressed(false) {};
 CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : prevout(txin.prevout.n, txid) {
 	prevout = CCompressedOutPoint(txin.prevout.n, txid);
-	sigSigned = false;
 	compressed = false;
 	if (txin.scriptSig.size() || txin.scriptWitness.stack.size()) {
-		sigSigned = true;
 		CScript scriptSig;
 		if (scriptPubKey.IsPayToPublicKeyHash()) {
 			scriptSig = txin.scriptSig;
@@ -247,7 +248,9 @@ CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, cons
 			secp256k1_ecdsa_signature sig;
 			if (secp256k1_ecdsa_signature_parse_der(ctx, &sig, &signature[0], length)) {
 				if (secp256k1_ecdsa_signature_serialize_compact(ctx, &signature[0], &sig)) {
-					signature.resize(length);
+					std::cout << "sig: " << HexStr(signature) << std::endl;
+					signature.resize(64);
+					std::cout << "nig: " << HexStr(signature) << std::endl;
 					compressed = true;
 				}
 			}
@@ -277,9 +280,9 @@ CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, cons
 		}
 	}
 	nSequence = txin.nSequence;
-	standardSequence = txin.nSequence == 0x00000000 || txin.nSequence == 0xFFFFFFF0 || txin.nSequence == 0xFFFFFFFE || txin.nSequence == 0xFFFFFFFF;
 }
 
+CCompressedTxOut::CCompressedTxOut() : compressed(false), nValue(0) {};
 CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
 	nValue = txout.nValue;
 	std::vector<std::vector<unsigned char>> solutions;
@@ -336,11 +339,13 @@ std::string CCompressedTransaction::ToString() const
 	nVersion,
 	nLockTime);
 	for (const auto& txin : vin)
-		str += strprintf("	CCompressedTxIn:\n		signature=%s,\n		hashType=%u,\n		CCompressedOutPoint:\n			CCompressedTxId:\n				block_height=%u,\n				block_index=%u\n			n=%u\n		nSquence=%u,\n		compressed=%b\n",
+		str += strprintf("	CCompressedTxIn:\n		signature=%s,\n		hashType=%u,\n		CCompressedOutPoint:\n			CCompressedTxId:\n				block_height=%u,\n				block_index=%u\n				txid=%s\n				compressed=%b\n			n=%u\n		nSquence=%u,\n		compressed=%b\n",
 		HexStr(txin.signature),
 		txin.hashType,
 		txin.prevout.txid.block_height,
 		txin.prevout.txid.block_index,
+		HexStr(txin.prevout.txid.txid),
+		txin.prevout.txid.compressed,
 		txin.prevout.n,
 		txin.nSequence,
 		txin.compressed);

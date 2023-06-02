@@ -459,15 +459,15 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
     CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
     std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
 	
-	CCompressedTransaction uct = compressed_transaction;
+//	CCompressedTransaction uct = compressed_transaction;
 
-////CDataStream stream(SER_DISK, 0);
-////compressed_transaction.Serialize(stream);
-////CCompressedTransaction uct = CCompressedTransaction();
-////uct.Unserialize(stream);
-////
-////std::cout << "uct: " << uct.ToString() << std::endl;
-////assert(compressed_transaction == uct);
+    CDataStream stream(SER_DISK, 0);
+    compressed_transaction.Serialize(stream);
+    CCompressedTransaction uct = CCompressedTransaction();
+    uct.Unserialize(stream);
+    
+    std::cout << "uct: " << uct.ToString() << std::endl;
+    assert(compressed_transaction == uct);
 	
 	//TODO: serilize and unserilize
 
