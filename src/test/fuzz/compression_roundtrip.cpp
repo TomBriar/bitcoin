@@ -463,6 +463,7 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 
     CDataStream stream(SER_DISK, 0);
     compressed_transaction.Serialize(stream);
+	std::cout << "cooomp = " << stream.str() << std::endl;
     CCompressedTransaction uct = CCompressedTransaction();
     uct.Unserialize(stream);
     
