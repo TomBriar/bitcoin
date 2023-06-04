@@ -284,9 +284,11 @@ CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, cons
 
 CCompressedTxOut::CCompressedTxOut() : compressed(false), nValue(0) {};
 CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
+	std::cout << "txout" << std::endl;
 	nValue = txout.nValue;
 	std::vector<std::vector<unsigned char>> solutions;
 	scriptType = Solver(txout.scriptPubKey, solutions);
+	std::cout << "solved" << std::endl;
 	switch (scriptType) {
 		case TxoutType::PUBKEY:
 		case TxoutType::PUBKEYHASH:
@@ -299,17 +301,21 @@ CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
 			break;
 		default:
 			compressed = false;
+			scriptPubKey.resize(txout.scriptPubKey.size());
 			copy(txout.scriptPubKey.begin(), txout.scriptPubKey.end(), scriptPubKey.begin());
 	}
+	std::cout << "txcp" << std::endl;
 }
 
 CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTransaction tx, const std::vector<CCompressedTxId>& txids, const std::vector<CScript>& scriptPubKeys) {
+	std::cout << "TESTESET: " << tx.ToString() << std::endl;
 	nInputCount = tx.vin.size();
 	nOutputCount = tx.vout.size(); 
 	nVersion = tx.nVersion; 
 	nLockTime = tx.nLockTime; 
 	shortendLockTime = false;
-	coinbase = tx.vin[0].prevout.n == 4294967295;
+	coinbase = false;
+	if (tx.vin.size() > 0) coinbase = tx.vin[0].prevout.n == 4294967295;
 
 	for (auto const& txout : tx.vout) {
 		vout.push_back(CCompressedTxOut(txout));
@@ -319,6 +325,7 @@ CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTr
 		vin.push_back(CCompressedTxIn(ctx, tx.vin.at(index), txids.at(index), scriptPubKeys.at(index))); 
 	}
 
+	std::cout << "stupid" << std::endl;
 	uint32_t limit = pow(2, 16);
 	if (tx.nLockTime > limit) {
 		for (uint32_t i = 0; i < nInputCount; i++) {
@@ -328,6 +335,7 @@ CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTr
 			}
 		}
 	}
+	std::cout << "complete" << std::endl;
 }
 
 std::string CCompressedTransaction::ToString() const

@@ -21,6 +21,7 @@
 #include <policy/policy.h>
 #include <policy/rbf.h>
 #include <primitives/transaction.h>
+#include <primitives/compression.h>
 #include <psbt.h>
 #include <random.h>
 #include <rpc/blockchain.h>
@@ -464,10 +465,13 @@ static RPCHelpMan compressrawtransaction()
 	BlockManager* blockman = &active_chainstate.m_blockman;
     RPCTypeCheck(request.params, {UniValue::VSTR});
     UniValue r(UniValue::VOBJ);
+	CCompressedTransaction ctx;
 	CMutableTransaction mtx;
 	std::string error = "";
 
-    if (!DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
+	std::cout << "init"	<< std::endl;
+
+    if (DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
 		std::map<COutPoint, Coin> coins; 
 		for (size_t index = 0; index < mtx.vin.size(); index++) { 
 			coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout. 
@@ -478,26 +482,35 @@ static RPCHelpMan compressrawtransaction()
 		for (size_t index = 0; index < mtx.vin.size(); index++) { 
 			input_scripts.push_back(coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)].out.scriptPubKey);
 			uint256 block_hash;
+			bool compressed_txid = false;
 			if (GetTransaction(nullptr, node.mempool.get(), mtx.vin.at(index).prevout.hash, chainman.GetConsensus(), block_hash)) {
 				const CBlockIndex* pindex{nullptr};
 				{
 					LOCK(cs_main);
 					pindex = blockman->LookupBlockIndex(block_hash);
 				}
-				assert(pindex);
 				uint32_t block_height = pindex->nHeight;
 				uint32_t block_index;
-				assert(block.LookupTransactionIndex(txid, block_index));
-				txids.push_back(CCompressedTxId(block_height, block_index));
-			} else {
+				CBlock block;
+				//If the transaction was found abovej
+				if (ReadBlockFromDisk(block, pindex, chainman.GetConsensus())) {
+					if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
+						txids.push_back(CCompressedTxId(block_height, block_index));
+						compressed_txid = false;	
+					}
+				}
+			}
+			if (!compressed_txid) {
 				txids.push_back(CCompressedTxId(mtx.vin.at(index).prevout.hash));
 				error = "Could not find Transaction Index to Compress";
 			} 
 		}
-		CCompressedTransaction ctx = CCompressedTransaction(secp_context, CTransaction(mtx), txids, input_scripts)
+		ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
 	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
-    r.pushKV("result", txHex);
-    r.pushKV("error", "none");
+	CDataStream stream(SER_DISK, 0);
+	ctx.Serialize(stream);
+    r.pushKV("result", stream.str());
+    r.pushKV("error", error);
 	return r;
 },
     };
@@ -523,13 +536,60 @@ static RPCHelpMan decompressrawtransaction()
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
+	const NodeContext& node = EnsureAnyNodeContext(request.context);
+	ChainstateManager& chainman = EnsureChainman(node);
+	Chainstate& active_chainstate = chainman.ActiveChainstate();
+	BlockManager* blockman = &active_chainstate.m_blockman;
     RPCTypeCheck(request.params, {UniValue::VSTR});
-	std::string txHex = request.params[0].get_str();
-
-
     UniValue r(UniValue::VOBJ);
-    r.pushKV("result", txHex);
-    r.pushKV("error", "none");
+	CCompressedTransaction ctx;
+	CMutableTransaction mtx;
+	std::string error = "";
+
+	std::cout << "init"	<< std::endl;
+
+	CDataStream stream(SER_DISK, 0);
+	stream << request.params[0].get_str();
+	ctx.Unserialize(stream);
+
+    if (unserialied) {
+		std::map<COutPoint, Coin> coins; 
+		for (size_t index = 0; index < mtx.vin.size(); index++) { 
+			coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout. 
+		} 
+		FindCoins(node, coins);
+		std::vector<CScript> input_scripts;
+		std::vector<CCompressedTxId> txids;
+		for (size_t index = 0; index < mtx.vin.size(); index++) { 
+			input_scripts.push_back(coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)].out.scriptPubKey);
+			uint256 block_hash;
+			bool compressed_txid = false;
+			if (GetTransaction(nullptr, node.mempool.get(), mtx.vin.at(index).prevout.hash, chainman.GetConsensus(), block_hash)) {
+				const CBlockIndex* pindex{nullptr};
+				{
+					LOCK(cs_main);
+					pindex = blockman->LookupBlockIndex(block_hash);
+				}
+				uint32_t block_height = pindex->nHeight;
+				uint32_t block_index;
+				CBlock block;
+				//If the transaction was found abovej
+				if (ReadBlockFromDisk(block, pindex, chainman.GetConsensus())) {
+					if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
+						txids.push_back(CCompressedTxId(block_height, block_index));
+						compressed_txid = false;	
+					}
+				}
+			}
+			if (!compressed_txid) {
+				txids.push_back(CCompressedTxId(mtx.vin.at(index).prevout.hash));
+				error = "Could not find Transaction Index to Compress";
+			} 
+		}
+		ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
+	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+    r.pushKV("result", stream.str());
+    r.pushKV("error", error);
 	return r;
 },
     };
