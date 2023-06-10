@@ -15,6 +15,7 @@ class CBlockHeader;
 class CScript;
 class CTransaction;
 struct CMutableTransaction;
+struct CCompressedTransaction;
 class uint256;
 class UniValue;
 class CTxUndo;
@@ -31,6 +32,7 @@ enum class TxVerbosity {
 // core_read.cpp
 CScript ParseScript(const std::string& s);
 std::string ScriptToAsmStr(const CScript& script, const bool fAttemptSighashDecode = false);
+[[nodiscard]] bool DecodeCompressedHexTx(CCompressedTransaction& ctx, const std::string& hex_ctx);
 [[nodiscard]] bool DecodeHexTx(CMutableTransaction& tx, const std::string& hex_tx, bool try_no_witness = false, bool try_witness = true);
 [[nodiscard]] bool DecodeHexBlk(CBlock&, const std::string& strHexBlk);
 bool DecodeHexBlockHeader(CBlockHeader&, const std::string& hex_header);

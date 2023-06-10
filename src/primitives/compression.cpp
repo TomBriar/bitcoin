@@ -1,13 +1,21 @@
 #include <primitives/compression.h>
 
+CCompressedTxId::CCompressedTxId(const uint256& txid) : block_height(0), block_index(0), txid(txid) {};
+CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : block_height(block_height), block_index(block_index) {};
+
+CCompressedOutPoint::CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid) : txid(txid), n(n) {}
+
+////template <typename Stream, typename TxIdType>
+////CCompressedOutPoint::CCompressedOutPoint(Stream& s, const TxIdType& txIdType) : txid(CCompressedTxId(s, txIdType)), n(readu32(s)) {}
+
 CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs) {
-	assert(outs.size() == tx.vin.size());
 	std::cout << "DECOMPRESS" << std::endl;
+	assert(outs.size() == tx.vin.size());
 	nVersion = tx.nVersion;
 	nLockTime = tx.nLockTime;
 	for (const auto& txout : tx.vout) {
 		CScript script;
-		if (txout.scriptType != TxoutType::NONSTANDARD) {
+		if (txout.IsCompressed()) {
 			std::vector<std::vector<unsigned char>> vSolutions;
 			vSolutions.push_back(std::move(txout.scriptPubKey));
 			CTxDestination destination;
@@ -192,46 +200,35 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 			}
 		} else if (tx.vin.at(index).isSigned()) {
 			std::cout << "deserlize" << std::endl;
-			std::vector<unsigned char> sig(tx.vin.at(index).signature.size());
-			copy(tx.vin.at(index).signature.begin(), tx.vin.at(index).signature.end(), sig.begin());
-			std::vector<std::byte> bvec = reinterpret_cast<std::vector<std::byte> &&> (sig);
 			CDataStream stream(SER_DISK, 0);
-			stream.write(bvec);
+			stream.write(MakeByteSpan(tx.vin.at(index).signature));
 			uint64_t scriptSigLength = std::numeric_limits<uint64_t>::max();
 			stream >> VARINT(scriptSigLength);
 			if (scriptSigLength) {
-				std::vector<std::byte> scriptSigBytes(scriptSigLength);
-				stream.read(scriptSigBytes);
-				std::vector<unsigned char> script = reinterpret_cast<std::vector<unsigned char> &&> (scriptSigBytes);
-				vin.at(index).scriptSig = CScript(script.begin(), script.end());
+				std::vector<unsigned char> scriptSigBytes(scriptSigLength);
+				stream.read(MakeWritableByteSpan(scriptSigBytes));
+				vin.at(index).scriptSig = CScript(scriptSigBytes.begin(), scriptSigBytes.end());
 			}
-			//TODO: avoid reinterpret cast by adding new constructor for CScript(std::byte)
 			uint64_t witnessCount = std::numeric_limits<uint64_t>::max();
 			stream >> VARINT(witnessCount);
 			std::vector<std::vector<unsigned char>> stack;
 			for (uint64_t i = 0; witnessCount < i; i++) {
 				uint64_t witnessLength = std::numeric_limits<uint64_t>::max();
 				stream >> VARINT(witnessLength);
-				std::vector<std::byte> witness(witnessLength);
-				stream.read(witness);
-				stack.push_back(reinterpret_cast<std::vector<unsigned char> &&> (witness));
+				std::vector<unsigned char> witness(witnessLength);
+				stream.read(MakeWritableByteSpan(witness));
+				stack.push_back(witness);
 			}
 			vin.at(index).scriptWitness.stack = stack;
 		}
 	}
 }
 
-CCompressedTxId::CCompressedTxId() : block_height(0), block_index(0) {};
-CCompressedTxId::CCompressedTxId(const uint256& txid) : block_height(0), block_index(0), txid(txid), compressed(false) {};
-CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : block_height(block_height), block_index(block_index), compressed(true) {};
-
-CCompressedOutPoint::CCompressedOutPoint() : n(0) {};
-CCompressedOutPoint::CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid) : txid(txid), n(n) {}
-
-CCompressedTxIn::CCompressedTxIn() : hashType(0), nSequence(0), compressed(false) {};
+CCompressedTxIn::CCompressedTxIn(const CCompressedOutPoint& prevout) : hashType(0), prevout(prevout), nSequence(0), compressed(false) {};
+CCompressedTxIn::CCompressedTxIn() : hashType(0), prevout(0, CCompressedTxId(0, 0)), nSequence(0), compressed(false) {};
 CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : prevout(txin.prevout.n, txid) {
-	prevout = CCompressedOutPoint(txin.prevout.n, txid);
 	compressed = false;
+	hashType = 0;
 	if (txin.scriptSig.size() || txin.scriptWitness.stack.size()) {
 		CScript scriptSig;
 		if (scriptPubKey.IsPayToPublicKeyHash()) {
@@ -274,15 +271,14 @@ CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, cons
 				stream << VARINT(txin.scriptWitness.stack.at(index).size());
 				stream << txin.scriptWitness.stack.at(index);
 			}
-			std::vector<std::byte> sig_stream(stream.size());
-			stream.read(sig_stream);
-			signature = reinterpret_cast<std::vector<unsigned char> &&> (sig_stream);
+			signature.resize(stream.size());
+			stream.read(MakeWritableByteSpan(signature));
 		}
 	}
 	nSequence = txin.nSequence;
 }
 
-CCompressedTxOut::CCompressedTxOut() : compressed(false), nValue(0) {};
+CCompressedTxOut::CCompressedTxOut() : nValue(0) {};
 CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
 	std::cout << "txout" << std::endl;
 	nValue = txout.nValue;
@@ -296,11 +292,9 @@ CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
 		case TxoutType::WITNESS_V0_KEYHASH:
 		case TxoutType::WITNESS_V0_SCRIPTHASH:
 		case TxoutType::WITNESS_V1_TAPROOT:
-			compressed = true;
 			scriptPubKey = solutions.at(0);
 			break;
 		default:
-			compressed = false;
 			scriptPubKey.resize(txout.scriptPubKey.size());
 			copy(txout.scriptPubKey.begin(), txout.scriptPubKey.end(), scriptPubKey.begin());
 	}
@@ -314,8 +308,6 @@ CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTr
 	nVersion = tx.nVersion; 
 	nLockTime = tx.nLockTime; 
 	shortendLockTime = false;
-	coinbase = false;
-	if (tx.vin.size() > 0) coinbase = tx.vin[0].prevout.n == 4294967295;
 
 	for (auto const& txout : tx.vout) {
 		vout.push_back(CCompressedTxOut(txout));
@@ -341,11 +333,12 @@ CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTr
 std::string CCompressedTransaction::ToString() const
 {
 	std::string str;
-	str += strprintf("CCompressedTransaction:\n	InputCount=%u,\n	nOutputCount=%u,\n	nVersion=%u,\n	nLockTime=%u\n",
+	str += strprintf("CCompressedTransaction:\n	InputCount=%u,\n	nOutputCount=%u,\n	nVersion=%u,\n	nLockTime=%u\n,	shortendlocktim=%b\n",
 	nInputCount,
 	nOutputCount,
 	nVersion,
-	nLockTime);
+	nLockTime,
+	shortendLockTime);
 	for (const auto& txin : vin)
 		str += strprintf("	CCompressedTxIn:\n		signature=%s,\n		hashType=%u,\n		CCompressedOutPoint:\n			CCompressedTxId:\n				block_height=%u,\n				block_index=%u\n				txid=%s\n				compressed=%b\n			n=%u\n		nSquence=%u,\n		compressed=%b\n",
 		HexStr(txin.signature),
@@ -353,14 +346,13 @@ std::string CCompressedTransaction::ToString() const
 		txin.prevout.txid.block_height,
 		txin.prevout.txid.block_index,
 		HexStr(txin.prevout.txid.txid),
-		txin.prevout.txid.compressed,
+		txin.prevout.txid.IsCompressed(),
 		txin.prevout.n,
 		txin.nSequence,
 		txin.compressed);
 	for (const auto& txout : vout)
-		str += strprintf("	CCompressedTxOut:\n		scriptPubKey=%s\n		compressed=%b\n,		nValue=%u",
+		str += strprintf("	CCompressedTxOut:\n		scriptPubKey=%s\n		nValue=%u",
 		HexStr(txout.scriptPubKey),
-		txout.compressed,
 		txout.nValue);
 	return str;
 }

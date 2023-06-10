@@ -13,6 +13,7 @@
 #include <util/strencodings.h>
 
 #include <string>
+#include <iostream>
 
 typedef std::vector<unsigned char> valtype;
 
@@ -237,6 +238,8 @@ TxoutType Solver(const CScript& scriptPubKey, std::vector<std::vector<unsigned c
 bool BuildDestination(const std::vector<std::vector<unsigned char>>& vSolutions, const TxoutType& scriptType, CTxDestination& addressRet) {
 	if (!vSolutions.size()) 
 		return false;
+
+	std::cout << "scriptType = " << GetTxnOutputType(scriptType) << std::endl;
 
 	switch (scriptType) {
     case TxoutType::PUBKEY: {

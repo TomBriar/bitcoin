@@ -457,17 +457,30 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 
     const CTransaction tx = CTransaction(mtx);
     CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
-    std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
+	std::cout << "doneou" << std::endl;
 	
 //	CCompressedTransaction uct = compressed_transaction;
+////CDataStream stre(SER_DISK, 0);
+////bool compressed;
+////compressed_transaction.vin.at(0).prevout.Serialize(stre, compressed);
+////std::cout << "stream: " << HexStr(stre) << std::endl;
+////CCompressedOutPoint prevout = CCompressedOutPoint(stre, compressed);
+////std::cout << "prevout compressed: " << compressed_transaction.vin.at(0).prevout.txid.GetBlockHeight() << ", " << compressed_transaction.vin.at(0).prevout.txid.GetBlockIndex() << ", " << HexStr(compressed_transaction.vin.at(0).prevout.txid.GetTxId()) << ", " << compressed_transaction.vin.at(0).prevout.n << std::endl;
+////std::cout << "prveout: " << prevout.txid.GetBlockHeight() << ", " << prevout.txid.GetBlockIndex() << ", " << HexStr(prevout.txid.GetTxId()) << ", " << prevout.n << std::endl;
+////
+
+////assert(false);
 
     CDataStream stream(SER_DISK, 0);
     compressed_transaction.Serialize(stream);
-	std::cout << "cooomp = " << stream.str() << std::endl;
+	std::cout << "SERIALIZED: " << HexStr(stream) << std::endl;
     CCompressedTransaction uct = CCompressedTransaction();
     uct.Unserialize(stream);
     
+    std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
     std::cout << "uct: " << uct.ToString() << std::endl;
+	assert(compressed_transaction.vin == uct.vin);
+	assert(compressed_transaction.vout == uct.vout);
     assert(compressed_transaction == uct);
 	
 	//TODO: serilize and unserilize

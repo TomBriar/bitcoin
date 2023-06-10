@@ -524,11 +524,7 @@ static RPCHelpMan decompressrawtransaction()
                     {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The compressed transaction hex string"},
                 },
                 RPCResult{
-                    RPCResult::Type::OBJ, "", "",
-					{
-                    	{RPCResult::Type::STR_HEX, "result", "The decompressed transaction hex string"},
-                    	{RPCResult::Type::STR, "error", "Errors encountered during the decompression"},
-					},
+                   	RPCResult::Type::STR_HEX, "result", "The decompressed transaction hex string"
                 },
                 RPCExamples{
                     HelpExampleCli("decompressrawtransaction", "\"hexstring\"")
@@ -543,54 +539,47 @@ static RPCHelpMan decompressrawtransaction()
     RPCTypeCheck(request.params, {UniValue::VSTR});
     UniValue r(UniValue::VOBJ);
 	CCompressedTransaction ctx;
-	CMutableTransaction mtx;
-	std::string error = "";
 
 	std::cout << "init"	<< std::endl;
 
-	CDataStream stream(SER_DISK, 0);
-	stream << request.params[0].get_str();
-	ctx.Unserialize(stream);
+    if (DecodeCompressedHexTx(ctx, request.params[0].get_str())) {
+		std::vector<uint256> txids;
+		if (ctx.nInputCount > 0) {
+			std::vector<CBlockIndex*> blocks;
+			blocks = blockman->GetAllBlockIndices();
+			int blocks_length = blocks.size();
 
-    if (unserialied) {
+			for (size_t index = 0; index < ctx.nInputCount; index++) {
+				if (ctx.vin.at(index).prevout.txid.IsCompressed()) {
+					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
+						const CBlockIndex* pindex{nullptr};
+						pindex = blocks.at(blocks_index);
+						uint32_t height = pindex->nHeight;
+						if (height == ctx.vin.at(index).prevout.txid.block_height) {
+							CBlock block;
+							ReadBlockFromDisk(block, pindex, chainman.GetConsensus());
+							uint256 txid = (*block.vtx.at(ctx.vin.at(index).prevout.txid.block_index)).GetHash();
+							CTransactionRef tr = GetTransaction(nullptr, nullptr, txid, chainman.GetConsensus(), txid);
+							if (tr == nullptr) throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Couldn't find TxId");
+							txids.push_back(txid);
+						}
+					}
+				} else txids.push_back(ctx.vin.at(index).prevout.txid.txid);
+			}
+		}
+
 		std::map<COutPoint, Coin> coins; 
-		for (size_t index = 0; index < mtx.vin.size(); index++) { 
-			coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout. 
+		for (size_t index = 0; index < ctx.nInputCount; index++) { 
+			coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout.
 		} 
 		FindCoins(node, coins);
-		std::vector<CScript> input_scripts;
-		std::vector<CCompressedTxId> txids;
-		for (size_t index = 0; index < mtx.vin.size(); index++) { 
-			input_scripts.push_back(coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)].out.scriptPubKey);
-			uint256 block_hash;
-			bool compressed_txid = false;
-			if (GetTransaction(nullptr, node.mempool.get(), mtx.vin.at(index).prevout.hash, chainman.GetConsensus(), block_hash)) {
-				const CBlockIndex* pindex{nullptr};
-				{
-					LOCK(cs_main);
-					pindex = blockman->LookupBlockIndex(block_hash);
-				}
-				uint32_t block_height = pindex->nHeight;
-				uint32_t block_index;
-				CBlock block;
-				//If the transaction was found abovej
-				if (ReadBlockFromDisk(block, pindex, chainman.GetConsensus())) {
-					if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
-						txids.push_back(CCompressedTxId(block_height, block_index));
-						compressed_txid = false;	
-					}
-				}
-			}
-			if (!compressed_txid) {
-				txids.push_back(CCompressedTxId(mtx.vin.at(index).prevout.hash));
-				error = "Could not find Transaction Index to Compress";
-			} 
+		std::vector<CTxOut> outs;
+		for (size_t index = 0; index < ctx.nInputCount; index++) { 
+			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout.n)].out); 
 		}
-		ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
-	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
-    r.pushKV("result", stream.str());
-    r.pushKV("error", error);
-	return r;
+		return EncodeHexTx(CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs)));
+	}
+	throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Compressed TX decode failed");
 },
     };
 }
