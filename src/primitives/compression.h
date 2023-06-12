@@ -17,22 +17,7 @@
 #include <util/strencodings.h>
 #include <bitset>
 
-template <typename Stream>
-uint32_t readu32(Stream& s) {
-	uint32_t n = std::numeric_limits<uint32_t>::max();
-	s >> VARINT(n);
-	return n;
-}
-
-template <typename Stream>
-uint256 readu256(Stream& s) {
-	std::vector<unsigned char> txid(32);
-	s.read(MakeWritableByteSpan(txid));
-	return uint256(txid);
-}
-
-struct CompressedTxId {};
-struct UncompressedTxId {};
+struct CMutableCompressedTxId;
 
 class CCompressedTxId
 {
@@ -41,20 +26,14 @@ public:
     const uint32_t block_index;
 	const uint256 txid;
 
+	explicit CCompressedTxId(const CMutableCompressedTxId& txid);
+	explicit CCompressedTxId(CMutableCompressedTxId&& txid);
+
     explicit CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index);
     explicit CCompressedTxId(const uint256& txid);
 
-	template <typename Stream>
-	CCompressedTxId(Stream& s, CompressedTxId& type) : block_height(readu32(s)), block_index(readu32(s)) {};
-	template <typename Stream>
-	CCompressedTxId(Stream& s, UncompressedTxId& type) : block_height(0), block_index(0), txid(readu256(s)) {};
-
 	bool IsCompressed() const {
 		return txid.IsNull();
-	}
-
-	bool IsNull() const {
-		return block_height == 0 && block_index == 0 && txid.IsNull();
 	}
 
 	friend bool operator==(const CCompressedTxId& a, const CCompressedTxId& b) {
@@ -65,9 +44,8 @@ public:
 	}
 
 	template <typename Stream>
-	inline void Serialize(Stream& s, bool& compressed) const {
-		compressed = this->IsCompressed();
-		if (compressed) {
+	inline void Serialize(Stream& s) const {
+		if (this->IsCompressed()) {
 			uint32_t a = this->block_height;
 			uint32_t b = this->block_index;
 			s << VARINT(a);
@@ -76,23 +54,52 @@ public:
 			s.write(MakeByteSpan(this->txid));
 		}
 	}
+
+	template <typename Stream>
+	CCompressedTxId(Stream& s, bool& compressed) : CCompressedTxId(CMutableCompressedTxId(s, compressed)) {};
 };
+
+class CMutableCompressedTxId
+{
+public:
+	uint32_t block_height;
+	uint32_t block_index;
+	uint256 txid;
+
+	explicit CMutableCompressedTxId(const CCompressedTxId& txid) : block_height(txid.block_height), block_index(txid.block_index), txid(txid.txid) {};
+
+	template <typename Stream>
+	inline void Unserialize(Stream& s, bool& compressed) const {
+		if (compressed) {
+			block_height = std::numeric_limits<uint32_t>::max();
+			block_index = std::numeric_limits<uint32_t>::max();
+			s >> VARINT(block_height);
+			s >> VARINT(block_index);
+		} else {
+			std::vector<unsigned char> txidVch(32);
+			s.read(MakeWritableByteSpan(txidVch));
+			txid = uint256(txidVch);
+		}
+	}
+
+	template<typename Stream>
+	CMutableCompressedTxId(Stream& s, bool& compressed) {
+		Unserialize(s, compressed);
+	}
+};
+
+struct CMutableCompressedOutPoint;
 
 class CCompressedOutPoint
 {
 public:
 	const CCompressedTxId txid;
     const uint32_t n;
+	//TODO: move to cpp
+	explicit CCompressedOutPoint(const CMutableCompressedOutPoint& prevout);
+	explicit CCompressedOutPoint(CMutableCompressedOutPoint&& prevout);
 
-	bool IsNull() const
-	{
-		return n == 0 && txid.IsNull();
-	}
-
-	explicit CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid);
-
-	template <typename Stream, typename TxIdType>
-	CCompressedOutPoint(Stream& s, TxIdType txIdType) : txid(CCompressedTxId(s, txIdType)), n(readu32(s)) {};
+	explicit CCompressedOutPoint(const CCompressedTxId& txid, const uint32_t& n);
 
 	friend bool operator==(const CCompressedOutPoint& a, const CCompressedOutPoint& b) {
 		return a.txid == b.txid && a.n == b.n;
@@ -102,58 +109,172 @@ public:
 	}
 
 	template <typename Stream>
-	inline void Serialize(Stream& s, bool& compressedTxId) const {
-		this->txid.Serialize(s, compressedTxId);
+	inline void Serialize(Stream& s) const {
+		this->txid.Serialize(s);
 		uint32_t u = this->n;
 		s << VARINT(u);	
 	}
+
+	template <typename Stream>
+	CCompressedOutPoint(Stream& s, const bool& compressedTxId) : CCompressedOutPoint(CMutableCompressedOutPoint(s, compressedTxId)) {};
 };
+
+class CMutableCompressedOutPoint
+{
+public:
+	CMutableCompressedTxId txid;
+	uint32_t n;
+
+	CMutableCompressedOutPoint(const CCompressedOutPoint& prevout) : txid(prevout.txid), n(prevout.n) {};
+
+	template <typename Stream>
+	inline void Unserialize(Stream& s, bool& compressed) const {
+		txid = CCompressedTxId(s, compressed);
+		n = std::numeric_limits<uint32_t>::max();
+		s >> VARINT(n);
+	}
+
+	template <typename Stream>
+	CMutableCompressedOutPoint(Stream& s, const bool& compressed) {
+		Unserialize(s, compressed);
+	}
+};
+
+struct CMutableCompressedTxIn;
 
 class CCompressedTxIn
 {
 public:
-	std::vector<unsigned char> signature;
-	uint8_t hashType;
-    CCompressedOutPoint prevout;
-    uint32_t nSequence;
-	bool compressed;
+	const std::vector<unsigned char> signature;
+	const bool compressed;
+	const uint8_t hashType;
+    const CCompressedOutPoint prevout;
+    const uint32_t nSequence;
 
-	explicit CCompressedTxIn();
-	explicit CCompressedTxIn(const CCompressedOutPoint& prevout);
+	explicit CCompressedTxIn(const CMutableCompressedTxIn& txin);
+	explicit CCompressedTxIn(CMutableCompressedTxIn&& txin);
+
 	explicit CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey);
-	
-	uint8_t SerializeSequence() const {
-		if (this->nSequence == 0xFFFFFFF0) return 1;
-		if (this->nSequence == 0xFFFFFFFE) return 2;
-		if (this->nSequence == 0xFFFFFFFF) return 3;
-		return 0;
+
+	//explicit CCompressedTxIn(const CCompressedOutPoint& prevout);
+
+	template <typename Stream>
+	CCompressedTxIn(Stream& s, const bool& standardSequence, const uint8_t& sequenceEncoding, const bool& compressedTxId, const bool& signatureSigned, const bool& compressedSignature, const bool& standardHash, const uint8_t& hashType) : CCompressedTxIn(CMutableCompressedTxIn(s, standardSequence, sequenceEncoding, compressedTxId, signatureSigned, compressedSignature, standardHash, hashType)) {};
+
+
+	bool GetSequenceEncoding(uint8_t& encoding) const {
+		if (this->nSequence == 0x0) { encoding = 0; return true; }
+		if (this->nSequence == 0xFFFFFFF0) { encoding = 1; return true; }
+		if (this->nSequence == 0xFFFFFFFE) { encoding = 2; return true; }
+		if (this->nSequence == 0xFFFFFFFF) { encoding = 3; return true; }
+		return false;
 	}
 
-	void UnserializeSequence(uint8_t sequenceEncoding) {
-		if (sequenceEncoding == 0) this->nSequence = 0x00000000;
-		if (sequenceEncoding == 1) this->nSequence = 0xFFFFFFF0;
-		if (sequenceEncoding == 2) this->nSequence = 0xFFFFFFFE;
-		if (sequenceEncoding == 3) this->nSequence = 0xFFFFFFFF;
-	}
+////void UnserializeSequence(uint8_t sequenceEncoding) {
+////	if (sequenceEncoding == 0) this->nSequence = 0x00000000;
+////	if (sequenceEncoding == 1) this->nSequence = 0xFFFFFFF0;
+////	if (sequenceEncoding == 2) this->nSequence = 0xFFFFFFFE;
+////	if (sequenceEncoding == 3) this->nSequence = 0xFFFFFFFF;
+////}
 
-	bool isSigned() const {
+	bool IsSigned() const {
 		return this->signature.size() > 0;
 	}
 
-	bool isSequenceStandard() const {
+	bool IsSequenceStandard() const {
 		return this->nSequence == 0x00 || this->nSequence == 0xFFFFFFF0 || this->nSequence == 0xFFFFFFFE || this->nSequence == 0xFFFFFFFF;
 	}
 	
-	bool isHashStandard() const {
+	bool IsHashStandard() const {
 		return this->hashType == 0x00 || this->hashType == 0x01;
 	}
 
-	friend bool operator==(const CCompressedTxIn& a, const CCompressedTxIn& b)
-	{
+	friend bool operator==(const CCompressedTxIn& a, const CCompressedTxIn& b) {
 		return a.signature == b.signature && a.hashType == b.hashType && a.prevout == b.prevout && a.nSequence == b.nSequence && a.compressed == b.compressed;
+	}
+	friend bool operator!=(const CCompressedTxIn& a, const CCompressedTxIn& b) {
+		return !(a == b);
+	}
+
+	template <typename Stream>
+	inline void Serialize(Stream& s, uint8_t& sequenceEncoding) const {
+		//TODO: dont use extra var
+		uint32_t nseq = this->nSequence;
+		if (!GetSequenceEncoding(sequenceEncoding)) s << VARINT(nseq);
+		this->prevout.Serialize(s);
+		if (this->IsSigned()) {
+			if (this->compressed) {
+				s.write(MakeByteSpan(this->signature));
+				if (!this->IsHashStandard()) s << this->hashType;
+			} else {
+				s << VARINT(this->signature.size());
+				s.write(MakeByteSpan(this->signature));
+				s << VARINT(this->hashType);
+			}
+		}
 	}
 };
 
+class CMutableCompressedTxIn
+{
+public:
+	std::vector<unsigned char> signature;
+	bool compressed;
+	uint8_t hashType;
+    CMutableCompressedOutPoint prevout;
+    uint32_t nSequence;
+
+	explicit CMutableCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey);
+
+	template <typename Stream>
+	inline void Unserialize(Stream& s, const bool& standardSequence, const uint8_t& sequenceEncoding, const bool& compressedTxId, const bool& signatureSigned, const bool& compressedSignature, const bool& standardHash, const uint8_t& hashEncoding) {
+		if (standardSequence) {
+			switch(sequenceEncoding) {
+				case 0: nSequence = 0x00000000; 
+					break;
+				case 1: nSequence = 0xFFFFFFF0;
+					break;
+				case 2: nSequence = 0xFFFFFFFE;
+					break;
+				case 3: nSequence = 0xFFFFFFFF;
+					break;
+			}
+		} else {
+			nSequence = std::numeric_limits<uint32_t>::max();
+			s >> VARINT(nSequence);
+		}
+
+		prevout = CMutableCompressedOutPoint(s, compressedTxId);
+
+		if (signatureSigned) {
+			if (compressedSignature) {
+				signature.resize(64);
+				s.read(MakeWritableByteSpan(signature));
+				if (standardHash) {
+					hashType = hashEncoding;
+				} else {
+					hashType = std::numeric_limits<uint8_t>::max();
+					s >> VARINT(hashType);
+				}
+				compressed = true;
+			} else {
+				uint64_t scriptLength = std::numeric_limits<uint64_t>::max();
+				s >> VARINT(scriptLength);
+				signature.resize(scriptLength);
+				s.read(MakeWritableByteSpan(signature));
+				hashType = std::numeric_limits<uint8_t>::max();
+				s >> VARINT(hashType);	
+			}
+			std::cout << "sig: " << HexStr(signature) << std::endl;
+		}
+
+	}
+	
+	template <typename Stream>
+	CMutableCompressedTxIn(Stream& s, const bool& standardSequence, const uint8_t& sequenceEncoding, const bool& compressedTxId, const bool& signatureSigned, const bool& compressedSignature, const bool& standardHash, const uint8_t& hashType) : prevout(CCompressedOutPoint(s, compressedTxId)) {
+		Unserialize(s, standardSequence, sequenceEncoding, compressedTxId, signatureSigned, compressedSignature, standardHash, hashType);
+	}
+};
 
 class CCompressedTxOut
 {
@@ -299,13 +420,12 @@ struct CCompressedTransaction
 			bool standardSequence = 0;
 			uint8_t sequenceEncoding = 0;
 			if (this->vin.size() > index) {
-				signatureSigned = this->vin.at(index).isSigned();
+				signatureSigned = this->vin.at(index).IsSigned();
 				compressedSignature = this->vin.at(index).compressed;
 				compressedTxId = this->vin.at(index).prevout.txid.IsCompressed();
-				standardHash = this->vin.at(index).isHashStandard();
+				standardHash = this->vin.at(index).IsHashStandard();
 				hashType = this->vin.at(index).hashType;
-				standardSequence = this->vin.at(index).isSequenceStandard();
-				sequenceEncoding = this->vin.at(index).SerializeSequence();
+				standardSequence = this->vin.at(index).GetSequenceEncoding(sequenceEncoding);
 			}
 			uint8_t scriptType = 7;
 			if (this->vout.size() > index) {
@@ -324,18 +444,7 @@ struct CCompressedTransaction
 			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
 
 			if (this->vin.size() > index) {
-				if (!standardSequence) s << VARINT(this->vin.at(index).nSequence);
-				this->vin.at(index).prevout.Serialize(s, compressedTxId);
-				if (signatureSigned) {
-					if (compressedSignature) {
-						s.write(MakeByteSpan(this->vin.at(index).signature));
-						if (!standardHash) s << this->vin.at(index).hashType;
-					} else {
-						s << VARINT(this->vin.at(index).signature.size());
-						s.write(MakeByteSpan(this->vin.at(index).signature));
-						s << VARINT(this->vin.at(index).hashType);
-					}
-				}
+				this->vin.at(index).Serialize(s, sequenceEncoding);
 			}
 			if (this->vout.size() > index) {
 				if (scriptType != 7) {
@@ -398,53 +507,7 @@ struct CCompressedTransaction
 
 			if (this->nInputCount > index) {
  				std::cout << "input: " << index << std::endl;
-				uint32_t nSequence;
-				if (standardSequence) {
-					switch(sequenceEncoding) {
-						case 0: nSequence = 0x00000000; 
-							break;
-						case 1: nSequence = 0xFFFFFFF0;
-							break;
-						case 2: nSequence = 0xFFFFFFFE;
-							break;
-						case 3: nSequence = 0xFFFFFFFF;
-							break;
-					}
-				} else {
-					nSequence = std::numeric_limits<uint32_t>::max();
-					s >> VARINT(nSequence);
-				}
-				if (compressedTxId) {
-					CCompressedTxIn vin(CCompressedOutPoint(s, CompressedTxId{}));
-					this->vin.push_back(vin);
-				} else {
-					CCompressedTxIn vin(CCompressedOutPoint(s, UncompressedTxId{}));
-					this->vin.push_back(vin);
-				}
-				vin.at(index).nSequence = nSequence;
-
-				if (signatureSigned) {
-					if (compressedSignature) {
-						vin.at(index).signature.resize(64);
-						s.read(MakeWritableByteSpan(vin.at(index).signature));
-						if (standardHash) {
-							vin.at(index).hashType = hashType;
-						} else {
-							vin.at(index).hashType = std::numeric_limits<uint8_t>::max();
-							s >> VARINT(vin.at(index).hashType);
-						}
-						vin.at(index).compressed = true;
-					} else {
-						uint64_t scriptLength = std::numeric_limits<uint64_t>::max();
-						s >> VARINT(scriptLength);
-						vin.at(index).signature.resize(scriptLength);
-						s.read(MakeWritableByteSpan(vin.at(index).signature));
-						vin.at(index).hashType = std::numeric_limits<uint8_t>::max();
-						s >> VARINT(vin.at(index).hashType);	
-						std::cout << "ht: " << vin.at(index).hashType << std::endl;
-					}
-					std::cout << "sig: " << HexStr(vin.at(index).signature) << std::endl;
-				}
+				this->vin.push_back(CCompressedTxIn(s, standardSequence, sequenceEncoding, compressedTxId, signatureSigned, compressedSignature, standardHash, hashType));
 			}
 			if (this->nOutputCount > index) {
  				std::cout << "output: " << index << std::endl;

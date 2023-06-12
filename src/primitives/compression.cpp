@@ -1,12 +1,83 @@
 #include <primitives/compression.h>
 
+//COMPRESSEDTXID
+
+CCompressedTxId::CCompressedTxId(const CMutableCompressedTxId& txid) : block_height(txid.block_height), block_index(txid.block_index), txid(txid.txid) {};
+
+CCompressedTxId::CCompressedTxId(CMutableCompressedTxId&& txid) : block_height(txid.block_height), block_index(txid.block_index), txid(std::move(txid.txid)) {};
+
 CCompressedTxId::CCompressedTxId(const uint256& txid) : block_height(0), block_index(0), txid(txid) {};
+
 CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : block_height(block_height), block_index(block_index) {};
 
-CCompressedOutPoint::CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid) : txid(txid), n(n) {}
 
-////template <typename Stream, typename TxIdType>
-////CCompressedOutPoint::CCompressedOutPoint(Stream& s, const TxIdType& txIdType) : txid(CCompressedTxId(s, txIdType)), n(readu32(s)) {}
+//COMPRESSEDOUTPOINT
+
+CCompressedOutPoint::CCompressedOutPoint(const CMutableCompressedOutPoint& prevout) : txid(CCompressedTxId(prevout.txid)), n(prevout.n) {};
+
+CCompressedOutPoint::CCompressedOutPoint(CMutableCompressedOutPoint&& prevout) : txid(CCompressedTxId(prevout.txid)), n(prevout.n) {};
+
+CCompressedOutPoint::CCompressedOutPoint(const CCompressedTxId& txid, const uint32_t& n) : txid(txid), n(n) {}
+
+//COMPRESSEDTXIN
+
+CCompressedTxIn::CCompressedTxIn(const CMutableCompressedTxIn& txin) : signature(txin.signature), compressed(txin.compressed), hashType(txin.hashType), prevout(CCompressedOutPoint(txin.prevout)), nSequence(txin.nSequence) {};
+
+CCompressedTxIn::CCompressedTxIn(CMutableCompressedTxIn&& txin) : signature(std::move(txin.signature)), compressed(txin.compressed), hashType(txin.hashType), prevout(CCompressedOutPoint(txin.prevout)), nSequence(txin.nSequence) {};
+
+CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : CCompressedTxIn(CMutableCompressedTxIn(ctx, txin, txid, scriptPubKey)) {};
+
+CMutableCompressedTxIn::CMutableCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : prevout(CCompressedOutPoint(txid, txin.prevout.n)), nSequence(txin.nSequence) {
+	compressed = false;
+	hashType = 0;
+	if (txin.scriptSig.size() || txin.scriptWitness.stack.size()) {
+		CScript scriptSig;
+		if (scriptPubKey.IsPayToPublicKeyHash()) {
+			scriptSig = txin.scriptSig;
+		} else if (txin.scriptWitness.stack.size() && scriptPubKey.IsPayToWitnessPublicKeyHash()) {
+			scriptSig = CScript(txin.scriptWitness.stack.at(0).begin(), txin.scriptWitness.stack.at(0).end());
+		}
+		if (scriptSig.size()) {
+			opcodetype opcodeRet;
+			CScriptBase::const_iterator pc = scriptSig.begin();
+			scriptSig.GetOp(pc, opcodeRet, signature);
+			hashType = signature.at(signature.size()-1);
+			int length = signature.size()-1;
+			secp256k1_ecdsa_signature sig;
+			if (secp256k1_ecdsa_signature_parse_der(ctx, &sig, &signature[0], length)) {
+				if (secp256k1_ecdsa_signature_serialize_compact(ctx, &signature[0], &sig)) {
+					std::cout << "sig: " << HexStr(signature) << std::endl;
+					signature.resize(64);
+					std::cout << "nig: " << HexStr(signature) << std::endl;
+					compressed = true;
+				}
+			}
+		} else if (txin.scriptWitness.stack.size() && scriptPubKey.IsPayToTaproot()) {
+			if (txin.scriptWitness.stack.at(0).size() == 64) {
+				hashType = 0;
+			} else {
+				signature = txin.scriptWitness.stack.at(0);
+				hashType = signature[signature.size()-1];
+				signature.pop_back();
+			}
+			compressed = true;
+		}
+		if (!compressed) {
+			CDataStream stream(SER_DISK, 0);
+			stream << VARINT(txin.scriptSig.size());
+			if (txin.scriptSig.size())
+				stream << txin.scriptSig;
+			stream << VARINT(txin.scriptWitness.stack.size());
+			for (size_t index = 0; index < txin.scriptWitness.stack.size(); index++) {
+				stream << VARINT(txin.scriptWitness.stack.at(index).size());
+				stream << txin.scriptWitness.stack.at(index);
+			}
+			signature.resize(stream.size());
+			stream.read(MakeWritableByteSpan(signature));
+		}
+	}
+}
+
 
 CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs) {
 	std::cout << "DECOMPRESS" << std::endl;
@@ -198,7 +269,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 				}
 				if (!tx.shortendLockTime || lockTimeFound) {lockTimeFound = true;} else {nLockTime += pow(2, 16);}
 			}
-		} else if (tx.vin.at(index).isSigned()) {
+		} else if (tx.vin.at(index).IsSigned()) {
 			std::cout << "deserlize" << std::endl;
 			CDataStream stream(SER_DISK, 0);
 			stream.write(MakeByteSpan(tx.vin.at(index).signature));
@@ -224,59 +295,9 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 	}
 }
 
-CCompressedTxIn::CCompressedTxIn(const CCompressedOutPoint& prevout) : hashType(0), prevout(prevout), nSequence(0), compressed(false) {};
-CCompressedTxIn::CCompressedTxIn() : hashType(0), prevout(0, CCompressedTxId(0, 0)), nSequence(0), compressed(false) {};
-CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : prevout(txin.prevout.n, txid) {
-	compressed = false;
-	hashType = 0;
-	if (txin.scriptSig.size() || txin.scriptWitness.stack.size()) {
-		CScript scriptSig;
-		if (scriptPubKey.IsPayToPublicKeyHash()) {
-			scriptSig = txin.scriptSig;
-		} else if (txin.scriptWitness.stack.size() && scriptPubKey.IsPayToWitnessPublicKeyHash()) {
-			scriptSig = CScript(txin.scriptWitness.stack.at(0).begin(), txin.scriptWitness.stack.at(0).end());
-		}
-		if (scriptSig.size()) {
-			opcodetype opcodeRet;
-			CScriptBase::const_iterator pc = scriptSig.begin();
-			scriptSig.GetOp(pc, opcodeRet, signature);
-			hashType = signature.at(signature.size()-1);
-			int length = signature.size()-1;
-			secp256k1_ecdsa_signature sig;
-			if (secp256k1_ecdsa_signature_parse_der(ctx, &sig, &signature[0], length)) {
-				if (secp256k1_ecdsa_signature_serialize_compact(ctx, &signature[0], &sig)) {
-					std::cout << "sig: " << HexStr(signature) << std::endl;
-					signature.resize(64);
-					std::cout << "nig: " << HexStr(signature) << std::endl;
-					compressed = true;
-				}
-			}
-		} else if (txin.scriptWitness.stack.size() && scriptPubKey.IsPayToTaproot()) {
-			if (txin.scriptWitness.stack.at(0).size() == 64) {
-				hashType = 0;
-			} else {
-				signature = txin.scriptWitness.stack.at(0);
-				hashType = signature[signature.size()-1];
-				signature.pop_back();
-			}
-			compressed = true;
-		}
-		if (!compressed) {
-			CDataStream stream(SER_DISK, 0);
-			stream << VARINT(txin.scriptSig.size());
-			if (txin.scriptSig.size())
-				stream << txin.scriptSig;
-			stream << VARINT(txin.scriptWitness.stack.size());
-			for (size_t index = 0; index < txin.scriptWitness.stack.size(); index++) {
-				stream << VARINT(txin.scriptWitness.stack.at(index).size());
-				stream << txin.scriptWitness.stack.at(index);
-			}
-			signature.resize(stream.size());
-			stream.read(MakeWritableByteSpan(signature));
-		}
-	}
-	nSequence = txin.nSequence;
-}
+//CCompressedTxIn::CCompressedTxIn(const CCompressedOutPoint& prevout) : hashType(0), prevout(prevout), nSequence(0), compressed(false) {};
+//CCompressedTxIn::CCompressedTxIn() : hashType(0), prevout(0, CCompressedTxId(0, 0)), nSequence(0), compressed(false) {};
+
 
 CCompressedTxOut::CCompressedTxOut() : nValue(0) {};
 CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
