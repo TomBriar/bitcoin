@@ -459,14 +459,15 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
     CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
 	std::cout << "doneou" << std::endl;
 	
+    std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
 //	CCompressedTransaction uct = compressed_transaction;
+////std::cout << "prevout compressed: " << compressed_transaction.vin.at(0).prevout.txid().ToString() << std::endl;
 ////CDataStream stre(SER_DISK, 0);
-////bool compressed;
-////compressed_transaction.vin.at(0).prevout.Serialize(stre, compressed);
+////bool compressed = compressed_transaction.vin.at(0).prevout.txid().IsCompressed();
+////compressed_transaction.vin.at(0).prevout.txid().Serialize(stre);
 ////std::cout << "stream: " << HexStr(stre) << std::endl;
-////CCompressedOutPoint prevout = CCompressedOutPoint(stre, compressed);
-////std::cout << "prevout compressed: " << compressed_transaction.vin.at(0).prevout.txid.GetBlockHeight() << ", " << compressed_transaction.vin.at(0).prevout.txid.GetBlockIndex() << ", " << HexStr(compressed_transaction.vin.at(0).prevout.txid.GetTxId()) << ", " << compressed_transaction.vin.at(0).prevout.n << std::endl;
-////std::cout << "prveout: " << prevout.txid.GetBlockHeight() << ", " << prevout.txid.GetBlockIndex() << ", " << HexStr(prevout.txid.GetTxId()) << ", " << prevout.n << std::endl;
+////CCompressedTxId txid = CCompressedTxId(deserialize, stre, compressed);
+////std::cout << "prveout: " << txid.ToString() << std::endl;
 ////
 
 ////assert(false);
@@ -487,12 +488,12 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 
     std::map<COutPoint, Coin> coins;
     for (size_t index = 0; index < uct.vin.size(); index++) {
-    	coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout.
+    	coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n())]; // Create empty map entry keyed by prevout.
     }
     rpc->GetCoins(coins);
     std::vector<CTxOut> outs;
 	for (size_t index = 0; index < uct.vin.size(); index++) {
-    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n)].out);
+    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n())].out);
     }
     CTransaction new_tx = CTransaction(CMutableTransaction(ctx, uct, txids, outs));
     std::cout << "uctx: " << new_tx.ToString() << std::endl;
