@@ -1,12 +1,25 @@
 #include <primitives/compression.h>
 
-CCompressedTxId::CCompressedTxId(const uint256& txid) : block_height(0), block_index(0), txid(txid) {};
-CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : block_height(block_height), block_index(block_index) {};
+CCompressedTxId::CCompressedTxId(const uint256& txid) : m_block_height(0), m_block_index(0), m_txid(txid) {};
 
-CCompressedOutPoint::CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid) : txid(txid), n(n) {}
+CCompressedTxId::CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index) : m_block_height(block_height), m_block_index(block_index) {};
 
-////template <typename Stream, typename TxIdType>
-////CCompressedOutPoint::CCompressedOutPoint(Stream& s, const TxIdType& txIdType) : txid(CCompressedTxId(s, txIdType)), n(readu32(s)) {}
+std::string CCompressedTxId::ToString() const
+{
+	return strprintf("CCompressedTxId: block_height=%u, block_index=%u, txid=%s",
+	m_block_height,
+	m_block_index,
+	HexStr(m_txid));
+}
+
+CCompressedOutPoint::CCompressedOutPoint(const CCompressedTxId& txid, const uint32_t& n) : m_txid(txid), m_n(n) {}
+
+std::string CCompressedOutPoint::ToString() const
+{
+	return strprintf("CCompressedOutPoint:\n txid=%s,\n n=%u",
+	m_txid.ToString(),
+	m_n);
+}
 
 CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs) {
 	std::cout << "DECOMPRESS" << std::endl;
@@ -28,7 +41,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 	}
 	for (size_t index = 0; index < tx.vin.size(); index++) {
 		//empty scriptSig and scriptWitness
-		vin.push_back(CTxIn(COutPoint(txids.at(index), tx.vin.at(index).prevout.n), CScript(), tx.vin.at(index).nSequence));
+		vin.push_back(CTxIn(COutPoint(txids.at(index), tx.vin.at(index).prevout.n()), CScript(), tx.vin.at(index).nSequence));
 	}
 
 	for (size_t index = 0; index < tx.vin.size(); index++) {
@@ -225,8 +238,8 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 }
 
 CCompressedTxIn::CCompressedTxIn(const CCompressedOutPoint& prevout) : hashType(0), prevout(prevout), nSequence(0), compressed(false) {};
-CCompressedTxIn::CCompressedTxIn() : hashType(0), prevout(0, CCompressedTxId(0, 0)), nSequence(0), compressed(false) {};
-CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : prevout(txin.prevout.n, txid) {
+CCompressedTxIn::CCompressedTxIn() : hashType(0), prevout(CCompressedTxId(0, 0), 0), nSequence(0), compressed(false) {};
+CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, const CCompressedTxId& txid, const CScript& scriptPubKey) : prevout(txid, txin.prevout.n) {
 	compressed = false;
 	hashType = 0;
 	if (txin.scriptSig.size() || txin.scriptWitness.stack.size()) {
@@ -343,11 +356,11 @@ std::string CCompressedTransaction::ToString() const
 		str += strprintf("	CCompressedTxIn:\n		signature=%s,\n		hashType=%u,\n		CCompressedOutPoint:\n			CCompressedTxId:\n				block_height=%u,\n				block_index=%u\n				txid=%s\n				compressed=%b\n			n=%u\n		nSquence=%u,\n		compressed=%b\n",
 		HexStr(txin.signature),
 		txin.hashType,
-		txin.prevout.txid.block_height,
-		txin.prevout.txid.block_index,
-		HexStr(txin.prevout.txid.txid),
-		txin.prevout.txid.IsCompressed(),
-		txin.prevout.n,
+		txin.prevout.txid().block_height(),
+		txin.prevout.txid().block_index(),
+		HexStr(txin.prevout.txid().txid()),
+		txin.prevout.txid().IsCompressed(),
+		txin.prevout.n(),
 		txin.nSequence,
 		txin.compressed);
 	for (const auto& txout : vout)

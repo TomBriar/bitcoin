@@ -17,96 +17,100 @@
 #include <util/strencodings.h>
 #include <bitset>
 
-template <typename Stream>
-uint32_t readu32(Stream& s) {
-	uint32_t n = std::numeric_limits<uint32_t>::max();
-	s >> VARINT(n);
-	return n;
-}
-
-template <typename Stream>
-uint256 readu256(Stream& s) {
-	std::vector<unsigned char> txid(32);
-	s.read(MakeWritableByteSpan(txid));
-	return uint256(txid);
-}
-
-struct CompressedTxId {};
-struct UncompressedTxId {};
-
 class CCompressedTxId
 {
+private:
+	uint32_t m_block_height;
+	uint32_t m_block_index;
+	uint256 m_txid;
 public:
-	const uint32_t block_height;
-    const uint32_t block_index;
-	const uint256 txid;
+	const uint32_t&  block_height() const  { return m_block_height; }
+    const uint32_t& block_index() const { return m_block_index; }
+	const uint256& txid() const { return m_txid; }
 
     explicit CCompressedTxId(const uint32_t& block_height, const uint32_t& block_index);
     explicit CCompressedTxId(const uint256& txid);
 
-	template <typename Stream>
-	CCompressedTxId(Stream& s, CompressedTxId& type) : block_height(readu32(s)), block_index(readu32(s)) {};
-	template <typename Stream>
-	CCompressedTxId(Stream& s, UncompressedTxId& type) : block_height(0), block_index(0), txid(readu256(s)) {};
-
 	bool IsCompressed() const {
-		return txid.IsNull();
-	}
-
-	bool IsNull() const {
-		return block_height == 0 && block_index == 0 && txid.IsNull();
+		return m_txid.IsNull();
 	}
 
 	friend bool operator==(const CCompressedTxId& a, const CCompressedTxId& b) {
-		return a.block_height == b.block_height && a.block_index == b.block_index && a.txid	== b.txid;
+		return a.m_block_height == b.m_block_height && a.m_block_index == b.m_block_index && a.m_txid	== b.m_txid;
 	}
 	friend bool operator!=(const CCompressedTxId& a, const CCompressedTxId& b) {
 		return !(a == b);
 	}
 
 	template <typename Stream>
-	inline void Serialize(Stream& s, bool& compressed) const {
-		compressed = this->IsCompressed();
-		if (compressed) {
-			uint32_t a = this->block_height;
-			uint32_t b = this->block_index;
-			s << VARINT(a);
-			s << VARINT(b);
+	inline void Serialize(Stream& s) const {
+		if (this->IsCompressed()) {
+			s << VARINT(this->m_block_height);
+			s << VARINT(this->m_block_index);
 		} else {
-			s.write(MakeByteSpan(this->txid));
+			s.write(MakeByteSpan(this->m_txid));
 		}
 	}
+
+	template <typename Stream>
+	inline void Unserialize(Stream& s, bool& compressed) {
+		if (compressed) {
+			this->m_block_height = std::numeric_limits<uint32_t>::max();
+			this->m_block_index = std::numeric_limits<uint32_t>::max();
+			s >> VARINT(this->m_block_height);
+			s >> VARINT(this->m_block_index);
+		} else {
+			std::vector<unsigned char> txid(32);
+			s.read(MakeWritableByteSpan(txid));
+			this->m_txid = uint256(txid);
+		}
+	}
+
+	template <typename Stream>
+	CCompressedTxId(deserialize_type, Stream& s, bool& compressed) {
+		Unserialize(s, compressed);
+	}
+
+    std::string ToString() const;
 };
 
 class CCompressedOutPoint
 {
+private:
+	CCompressedTxId m_txid;
+	uint32_t m_n;
 public:
-	const CCompressedTxId txid;
-    const uint32_t n;
+	const CCompressedTxId& txid() const { return m_txid; }
+    const uint32_t& n() const { return m_n; }
 
-	bool IsNull() const
-	{
-		return n == 0 && txid.IsNull();
-	}
-
-	explicit CCompressedOutPoint(const uint32_t& n, const CCompressedTxId& txid);
-
-	template <typename Stream, typename TxIdType>
-	CCompressedOutPoint(Stream& s, TxIdType txIdType) : txid(CCompressedTxId(s, txIdType)), n(readu32(s)) {};
+	explicit CCompressedOutPoint(const CCompressedTxId& txid, const uint32_t& n);
 
 	friend bool operator==(const CCompressedOutPoint& a, const CCompressedOutPoint& b) {
-		return a.txid == b.txid && a.n == b.n;
+		return a.m_txid == b.m_txid && a.m_n == b.m_n;
 	}
 	friend bool operator!=(const CCompressedOutPoint& a, const CCompressedOutPoint& b) {
 		return !(a == b);
 	}
 
 	template <typename Stream>
-	inline void Serialize(Stream& s, bool& compressedTxId) const {
-		this->txid.Serialize(s, compressedTxId);
-		uint32_t u = this->n;
-		s << VARINT(u);	
+	inline void Serialize(Stream& s) const {
+		this->m_txid.Serialize(s);
+		s << VARINT(this->m_n);	
 	}
+
+	template <typename Stream>
+	inline void Unserialize(Stream& s, bool& compressedTxId, bool constructor=false) {
+		if (!constructor) this->m_txid.Unserialize(s, compressedTxId);
+		this->m_n = std::numeric_limits<uint32_t>::max();
+		s >> VARINT(this->m_n);
+	}
+
+	template <typename Stream>
+	explicit CCompressedOutPoint(deserialize_type, Stream& s, bool& compressedTxId) : m_txid(CCompressedTxId(deserialize, s, compressedTxId)) {
+		Unserialize(s, compressedTxId, true);
+	}
+
+    std::string ToString() const;
 };
 
 class CCompressedTxIn
@@ -212,7 +216,7 @@ struct CCompressedTransaction
     explicit CCompressedTransaction(secp256k1_context* ctx, const CTransaction tx, const std::vector<CCompressedTxId>& txids, const std::vector<CScript>& scriptPubKeys);
 
 	bool IsCoinbase() const {
-		if (this->vin.size() > 1) return this->vin.at(0).prevout.n == 4294967295;
+		if (this->vin.size() > 1) return this->vin.at(0).prevout.n() == 4294967295;
 		return false;
 	} 
 
@@ -301,7 +305,7 @@ struct CCompressedTransaction
 			if (this->vin.size() > index) {
 				signatureSigned = this->vin.at(index).isSigned();
 				compressedSignature = this->vin.at(index).compressed;
-				compressedTxId = this->vin.at(index).prevout.txid.IsCompressed();
+				compressedTxId = this->vin.at(index).prevout.txid().IsCompressed();
 				standardHash = this->vin.at(index).isHashStandard();
 				hashType = this->vin.at(index).hashType;
 				standardSequence = this->vin.at(index).isSequenceStandard();
@@ -325,7 +329,7 @@ struct CCompressedTransaction
 
 			if (this->vin.size() > index) {
 				if (!standardSequence) s << VARINT(this->vin.at(index).nSequence);
-				this->vin.at(index).prevout.Serialize(s, compressedTxId);
+				this->vin.at(index).prevout.Serialize(s);
 				if (signatureSigned) {
 					if (compressedSignature) {
 						s.write(MakeByteSpan(this->vin.at(index).signature));
@@ -414,37 +418,33 @@ struct CCompressedTransaction
 					nSequence = std::numeric_limits<uint32_t>::max();
 					s >> VARINT(nSequence);
 				}
-				if (compressedTxId) {
-					CCompressedTxIn vin(CCompressedOutPoint(s, CompressedTxId{}));
-					this->vin.push_back(vin);
-				} else {
-					CCompressedTxIn vin(CCompressedOutPoint(s, UncompressedTxId{}));
-					this->vin.push_back(vin);
-				}
-				vin.at(index).nSequence = nSequence;
+
+				std::cout << "hi" << std::endl;
+				CCompressedTxIn vin = CCompressedTxIn(CCompressedOutPoint(deserialize, s, compressedTxId));
+				std::cout << "bye" << std::endl;
+				vin.nSequence = nSequence;
 
 				if (signatureSigned) {
 					if (compressedSignature) {
-						vin.at(index).signature.resize(64);
-						s.read(MakeWritableByteSpan(vin.at(index).signature));
+						vin.signature.resize(64);
+						s.read(MakeWritableByteSpan(vin.signature));
 						if (standardHash) {
-							vin.at(index).hashType = hashType;
+							vin.hashType = hashType;
 						} else {
-							vin.at(index).hashType = std::numeric_limits<uint8_t>::max();
-							s >> VARINT(vin.at(index).hashType);
+							vin.hashType = std::numeric_limits<uint8_t>::max();
+							s >> VARINT(vin.hashType);
 						}
-						vin.at(index).compressed = true;
+						vin.compressed = true;
 					} else {
 						uint64_t scriptLength = std::numeric_limits<uint64_t>::max();
 						s >> VARINT(scriptLength);
-						vin.at(index).signature.resize(scriptLength);
-						s.read(MakeWritableByteSpan(vin.at(index).signature));
-						vin.at(index).hashType = std::numeric_limits<uint8_t>::max();
-						s >> VARINT(vin.at(index).hashType);	
-						std::cout << "ht: " << vin.at(index).hashType << std::endl;
+						vin.signature.resize(scriptLength);
+						s.read(MakeWritableByteSpan(vin.signature));
+						vin.hashType = std::numeric_limits<uint8_t>::max();
+						s >> VARINT(vin.hashType);	
 					}
-					std::cout << "sig: " << HexStr(vin.at(index).signature) << std::endl;
 				}
+				this->vin.push_back(vin);
 			}
 			if (this->nOutputCount > index) {
  				std::cout << "output: " << index << std::endl;
