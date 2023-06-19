@@ -461,14 +461,15 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 	
     std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
 //	CCompressedTransaction uct = compressed_transaction;
-////std::cout << "prevout compressed: " << compressed_transaction.vin.at(0).prevout.txid().ToString() << std::endl;
+////std::cout << "precompressed: " << compressed_transaction.vin.at(0).ToString() << std::endl;
 ////CDataStream stre(SER_DISK, 0);
-////bool compressed = compressed_transaction.vin.at(0).prevout.txid().IsCompressed();
-////compressed_transaction.vin.at(0).prevout.txid().Serialize(stre);
+////uint64_t metadata = compressed_transaction.vin.at(0).GetMetaData();
+////std::cout << "metadata: " << std::bitset<64>(metadata) << std::endl;
+////compressed_transaction.vin.at(0).Serialize(stre);
 ////std::cout << "stream: " << HexStr(stre) << std::endl;
-////CCompressedTxId txid = CCompressedTxId(deserialize, stre, compressed);
-////std::cout << "prveout: " << txid.ToString() << std::endl;
-////
+////CCompressedTxIn txin = CCompressedTxIn(deserialize, stre, metadata);
+////std::cout << "decompressed: " << txin.ToString() << std::endl;
+
 
 ////assert(false);
 
@@ -488,12 +489,12 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 
     std::map<COutPoint, Coin> coins;
     for (size_t index = 0; index < uct.vin.size(); index++) {
-    	coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n())]; // Create empty map entry keyed by prevout.
+    	coins[COutPoint(txids.at(index), uct.vin.at(index).prevout().n())]; // Create empty map entry keyed by prevout.
     }
     rpc->GetCoins(coins);
     std::vector<CTxOut> outs;
 	for (size_t index = 0; index < uct.vin.size(); index++) {
-    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin.at(index).prevout.n())].out);
+    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin.at(index).prevout().n())].out);
     }
     CTransaction new_tx = CTransaction(CMutableTransaction(ctx, uct, txids, outs));
     std::cout << "uctx: " << new_tx.ToString() << std::endl;

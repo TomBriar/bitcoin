@@ -550,32 +550,32 @@ static RPCHelpMan decompressrawtransaction()
 			int blocks_length = blocks.size();
 
 			for (size_t index = 0; index < ctx.nInputCount; index++) {
-				if (ctx.vin.at(index).prevout.txid().IsCompressed()) {
+				if (ctx.vin.at(index).prevout().txid().IsCompressed()) {
 					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
 						const CBlockIndex* pindex{nullptr};
 						pindex = blocks.at(blocks_index);
 						uint32_t height = pindex->nHeight;
-						if (height == ctx.vin.at(index).prevout.txid().block_height()) {
+						if (height == ctx.vin.at(index).prevout().txid().block_height()) {
 							CBlock block;
 							ReadBlockFromDisk(block, pindex, chainman.GetConsensus());
-							uint256 txid = (*block.vtx.at(ctx.vin.at(index).prevout.txid().block_index())).GetHash();
+							uint256 txid = (*block.vtx.at(ctx.vin.at(index).prevout().txid().block_index())).GetHash();
 							CTransactionRef tr = GetTransaction(nullptr, nullptr, txid, chainman.GetConsensus(), txid);
 							if (tr == nullptr) throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Couldn't find TxId");
 							txids.push_back(txid);
 						}
 					}
-				} else txids.push_back(ctx.vin.at(index).prevout.txid().txid());
+				} else txids.push_back(ctx.vin.at(index).prevout().txid().txid());
 			}
 		}
 
 		std::map<COutPoint, Coin> coins; 
 		for (size_t index = 0; index < ctx.nInputCount; index++) { 
-			coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout.n())]; // Create empty map entry keyed by prevout.
+			coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout().n())]; // Create empty map entry keyed by prevout.
 		} 
 		FindCoins(node, coins);
 		std::vector<CTxOut> outs;
 		for (size_t index = 0; index < ctx.nInputCount; index++) { 
-			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout.n())].out); 
+			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout().n())].out); 
 		}
 		return EncodeHexTx(CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs)));
 	}
