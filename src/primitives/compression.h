@@ -254,14 +254,14 @@ public:
 	}
 
 	uint8_t GetSerializedScriptType() const {
-		if (!this->m_scriptPubKey.size()) return 7;
+		if (!this->m_scriptPubKey.size()) return 0;
 		if (this->m_scriptType == TxoutType::PUBKEY) return 1;
 		if (this->m_scriptType == TxoutType::PUBKEYHASH) return 2;
 		if (this->m_scriptType == TxoutType::SCRIPTHASH) return 3;
 		if (this->m_scriptType == TxoutType::WITNESS_V0_SCRIPTHASH) return 4;
 		if (this->m_scriptType == TxoutType::WITNESS_V0_KEYHASH) return 5;
 		if (this->m_scriptType == TxoutType::WITNESS_V1_TAPROOT) return 6;
-		return 0;
+		return 7;
 	}
 
 	template <typename Stream>
@@ -286,10 +286,10 @@ public:
 				scriptLength = 20;
 				this->m_scriptType = TxoutType::PUBKEYHASH;
 			} else if (serializedScriptType == 3) {
-				scriptLength = 65;
+				scriptLength = 20;
 				this->m_scriptType = TxoutType::SCRIPTHASH;
 			} else if (serializedScriptType == 4) {
-				scriptLength = 20;
+				scriptLength = 32;
 				this->m_scriptType = TxoutType::WITNESS_V0_SCRIPTHASH;
 			} else if (serializedScriptType == 5) {
 				scriptLength = 20;
@@ -303,6 +303,8 @@ public:
 			} else {
 				throw std::ios_base::failure(strprintf("Script Type Deseralization must be 0-7, %u is not a valid Script Type.", serializedScriptType));
 			}
+			std::cout << "scriptlen " << scriptLength << std::endl;
+			std::cout << "scrity " << GetTxnOutputType(this->m_scriptType) << std::endl;
 			this->m_scriptPubKey.resize(scriptLength);
 			s.read(MakeWritableByteSpan(this->m_scriptPubKey));
 		}
