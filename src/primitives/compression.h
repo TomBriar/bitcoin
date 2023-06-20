@@ -321,27 +321,32 @@ public:
 };
 
 /** A compressed version of CTransaction. */
-struct CCompressedTransaction
+class CCompressedTransaction
 {
-	uint32_t nVersion;
-	uint32_t nLockTime;
-	bool shortendLockTime;
+private:
+	uint32_t m_nVersion;
+	uint32_t m_nLockTime;
+	bool m_shortendLockTime;
+	std::vector<CCompressedTxIn> m_vin;
+	std::vector<CCompressedTxOut> m_vout;
+public:
 
-	CCompressedTransaction() {};
-
-	std::vector<CCompressedTxIn> vin;
-	std::vector<CCompressedTxOut> vout;
+	const uint32_t& nVersion() const { return m_nVersion; }
+	const uint32_t& nLockTime() const { return m_nLockTime; }
+	const bool& shortendLockTime() const { return m_shortendLockTime; }
+	const std::vector<CCompressedTxIn>& vin() const { return m_vin; }
+	const std::vector<CCompressedTxOut>& vout() const { return m_vout; }
 
     explicit CCompressedTransaction(secp256k1_context* ctx, const CTransaction tx, const std::vector<CCompressedTxId>& txids, const std::vector<CScript>& scriptPubKeys);
 
 	bool IsCoinbase() const {
-		if (this->vin.size() > 1) return this->vin.at(0).prevout().n() == 4294967295;
+		if (this->m_vin.size() > 1) return this->m_vin.at(0).prevout().n() == 4294967295;
 		return false;
 	} 
 
 	friend bool operator==(const CCompressedTransaction& a, const CCompressedTransaction& b)
 	{
-		return a.nVersion == b.nVersion && a.nLockTime == b.nLockTime && a.shortendLockTime == b.shortendLockTime && a.vin == b.vin && a.vout == b.vout;
+		return a.m_nVersion == b.m_nVersion && a.m_nLockTime == b.m_nLockTime && a.m_shortendLockTime == b.m_shortendLockTime && a.m_vin == b.m_vin && a.m_vout == b.m_vout;
 	}
 
 	friend bool operator!=(const CCompressedTransaction& a, const CCompressedTransaction& b)
@@ -393,13 +398,13 @@ struct CCompressedTransaction
 	template <typename Stream>
 	inline void Serialize(Stream& s) const {
 		uint8_t version = 0;
-		if (this->nVersion < 4) version = this->nVersion;
+		if (this->m_nVersion < 4) version = this->m_nVersion;
 		uint8_t inputCount = 0;
-		if (this->vin.size() < 4) inputCount = this->vin.size();
+		if (this->m_vin.size() < 4) inputCount = this->m_vin.size();
 		uint8_t outputCount = 0;
-		if (this->vout.size() < 4) outputCount = this->vout.size();
+		if (this->m_vout.size() < 4) outputCount = this->m_vout.size();
 		uint8_t lockTime = 0;
-		if (this->shortendLockTime) lockTime = 1; else if (this->nLockTime != 0) lockTime = 2;
+		if (this->m_shortendLockTime) lockTime = 1; else if (this->m_nLockTime != 0) lockTime = 2;
 
 		uint64_t control = version;
 		control |= inputCount << 2;
@@ -408,21 +413,21 @@ struct CCompressedTransaction
 		s << VARINT(control);
 		std::cout << "c: " << std::bitset<64>(control) << std::endl;
 
-		if (!version) s << VARINT(this->nVersion);
-		if (!inputCount) s << VARINT(this->vin.size());
-		if (!outputCount) s << VARINT(this->vout.size());
-		if (lockTime) s << VARINT(this->nLockTime);
+		if (!version) s << VARINT(this->m_nVersion);
+		if (!inputCount) s << VARINT(this->m_vin.size());
+		if (!outputCount) s << VARINT(this->m_vout.size());
+		if (lockTime) s << VARINT(this->m_nLockTime);
 
-		for (size_t index = 0; index < std::max(this->vin.size(), this->vout.size()); index++) {
+		for (size_t index = 0; index < std::max(this->m_vin.size(), this->m_vout.size()); index++) {
 			uint64_t vControl = 0;
-			if (this->vin.size() > index) vControl = this->vin.at(index).GetMetadata();
+			if (this->m_vin.size() > index) vControl = this->m_vin.at(index).GetMetadata();
 			uint8_t serializedScriptType = 0;
-			if (this->vout.size() > index) serializedScriptType = this->vout.at(index).GetSerializedScriptType();
+			if (this->m_vout.size() > index) serializedScriptType = this->m_vout.at(index).GetSerializedScriptType();
 			vControl |= serializedScriptType << 8;
 			s << VARINT(vControl);
 			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
-			if (this->vin.size() > index) this->vin.at(index).Serialize(s);
-			if (this->vout.size() > index) this->vout.at(index).Serialize(s);
+			if (this->m_vin.size() > index) this->m_vin.at(index).Serialize(s);
+			if (this->m_vout.size() > index) this->m_vout.at(index).Serialize(s);
 		}
 	}
 
@@ -441,9 +446,9 @@ struct CCompressedTransaction
 
 		if (!version) {
 			std::cout << "version varint" << std::endl;
-			this->nVersion = std::numeric_limits<uint32_t>::max();
-			s >> VARINT(this->nVersion);
-		} else this->nVersion = version;
+			this->m_nVersion = std::numeric_limits<uint32_t>::max();
+			s >> VARINT(this->m_nVersion);
+		} else this->m_nVersion = version;
 		if (!inputCount) {
 			std::cout << "input varint" << std::endl;
 			s >> VARINT(nInputCount);
@@ -452,13 +457,13 @@ struct CCompressedTransaction
 			std::cout << "output varint" << std::endl;
 			s >> VARINT(nOutputCount);
 		} else nOutputCount = outputCount;
-		this->shortendLockTime = false;
+		this->m_shortendLockTime = false;
 		if (lockTime) {
-			if (lockTime ==	1) this->shortendLockTime = true;
+			if (lockTime ==	1) this->m_shortendLockTime = true;
 			std::cout << "lock varint" << std::endl;
-			this->nLockTime = std::numeric_limits<uint32_t>::max();
-			s >> VARINT(this->nLockTime);
-		} else this->nLockTime = lockTime;
+			this->m_nLockTime = std::numeric_limits<uint32_t>::max();
+			s >> VARINT(this->m_nLockTime);
+		} else this->m_nLockTime = lockTime;
 
 		for (size_t index = 0; index < std::max(nInputCount, nOutputCount); index++) {
 			uint64_t vControl = std::numeric_limits<uint64_t>::max();
@@ -466,8 +471,8 @@ struct CCompressedTransaction
 			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
 			uint8_t serializedScriptType = (vControl & (0b111 << 8)) >> 8;
 
-			if (nInputCount > index) this->vin.push_back(CCompressedTxIn(deserialize, s, vControl));
-			if (nOutputCount > index) this->vout.push_back(CCompressedTxOut(deserialize, s, serializedScriptType));
+			if (nInputCount > index) this->m_vin.push_back(CCompressedTxIn(deserialize, s, vControl));
+			if (nOutputCount > index) this->m_vout.push_back(CCompressedTxOut(deserialize, s, serializedScriptType));
 		}
 	}
 

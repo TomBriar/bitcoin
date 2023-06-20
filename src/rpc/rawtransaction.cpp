@@ -465,20 +465,19 @@ static RPCHelpMan compressrawtransaction()
 	BlockManager* blockman = &active_chainstate.m_blockman;
     RPCTypeCheck(request.params, {UniValue::VSTR});
     UniValue r(UniValue::VOBJ);
-	CCompressedTransaction ctx;
 	CMutableTransaction mtx;
 	std::string error = "";
 
 	std::cout << "init"	<< std::endl;
 
+	std::vector<CScript> input_scripts;
+	std::vector<CCompressedTxId> txids;
     if (DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
 		std::map<COutPoint, Coin> coins; 
 		for (size_t index = 0; index < mtx.vin.size(); index++) { 
 			coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout. 
 		} 
 		FindCoins(node, coins);
-		std::vector<CScript> input_scripts;
-		std::vector<CCompressedTxId> txids;
 		for (size_t index = 0; index < mtx.vin.size(); index++) { 
 			input_scripts.push_back(coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)].out.scriptPubKey);
 			uint256 block_hash;
@@ -505,8 +504,9 @@ static RPCHelpMan compressrawtransaction()
 				error = "Could not find Transaction Index to Compress";
 			} 
 		}
-		ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
 	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+
+	CCompressedTransaction ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
 	CDataStream stream(SER_DISK, 0);
 	ctx.Serialize(stream);
     r.pushKV("result", stream.str());
@@ -538,47 +538,47 @@ static RPCHelpMan decompressrawtransaction()
 	BlockManager* blockman = &active_chainstate.m_blockman;
     RPCTypeCheck(request.params, {UniValue::VSTR});
     UniValue r(UniValue::VOBJ);
-	CCompressedTransaction ctx;
-
-	std::cout << "init"	<< std::endl;
-
-    if (DecodeCompressedHexTx(ctx, request.params[0].get_str())) {
+	try {
+		CDataStream ssData(ParseHex(request.params[0].get_str()), SER_NETWORK, PROTOCOL_VERSION);
+		CCompressedTransaction ctx = CCompressedTransaction(deserialize, ssData);
 		std::vector<uint256> txids;
-		if (ctx.vin.size() > 0) {
+		if (ctx.vin().size() > 0) {
 			std::vector<CBlockIndex*> blocks;
 			blocks = blockman->GetAllBlockIndices();
 			int blocks_length = blocks.size();
 
-			for (size_t index = 0; index < ctx.vin.size(); index++) {
-				if (ctx.vin.at(index).prevout().txid().IsCompressed()) {
+			for (size_t index = 0; index < ctx.vin().size(); index++) {
+				if (ctx.vin().at(index).prevout().txid().IsCompressed()) {
 					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
 						const CBlockIndex* pindex{nullptr};
 						pindex = blocks.at(blocks_index);
 						uint32_t height = pindex->nHeight;
-						if (height == ctx.vin.at(index).prevout().txid().block_height()) {
+						if (height == ctx.vin().at(index).prevout().txid().block_height()) {
 							CBlock block;
 							ReadBlockFromDisk(block, pindex, chainman.GetConsensus());
-							uint256 txid = (*block.vtx.at(ctx.vin.at(index).prevout().txid().block_index())).GetHash();
+							uint256 txid = (*block.vtx.at(ctx.vin().at(index).prevout().txid().block_index())).GetHash();
 							CTransactionRef tr = GetTransaction(nullptr, nullptr, txid, chainman.GetConsensus(), txid);
 							if (tr == nullptr) throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Couldn't find TxId");
 							txids.push_back(txid);
 						}
 					}
-				} else txids.push_back(ctx.vin.at(index).prevout().txid().txid());
+				} else txids.push_back(ctx.vin().at(index).prevout().txid().txid());
 			}
 		}
 
 		std::map<COutPoint, Coin> coins; 
-		for (size_t index = 0; index < ctx.vin.size(); index++) { 
-			coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout().n())]; // Create empty map entry keyed by prevout.
+		for (size_t index = 0; index < ctx.vin().size(); index++) { 
+			coins[COutPoint(txids.at(index), ctx.vin().at(index).prevout().n())]; // Create empty map entry keyed by prevout.
 		} 
 		FindCoins(node, coins);
 		std::vector<CTxOut> outs;
-		for (size_t index = 0; index < ctx.vin.size(); index++) { 
-			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout().n())].out); 
+		for (size_t index = 0; index < ctx.vin().size(); index++) { 
+			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin().at(index).prevout().n())].out); 
 		}
 		return EncodeHexTx(CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs)));
-	}
+	} catch (const std::exception& exc) {
+		// Fall through. 
+	}	
 	throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Compressed TX decode failed");
 },
     };

@@ -476,25 +476,22 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
     CDataStream stream(SER_DISK, 0);
     compressed_transaction.Serialize(stream);
 	std::cout << "SERIALIZED: " << HexStr(stream) << std::endl;
-    CCompressedTransaction uct = CCompressedTransaction();
-    uct.Unserialize(stream);
+    CCompressedTransaction uct = CCompressedTransaction(deserialize, stream);
     
     std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
     std::cout << "uct: " << uct.ToString() << std::endl;
-	assert(compressed_transaction.vin == uct.vin);
-	assert(compressed_transaction.vout == uct.vout);
     assert(compressed_transaction == uct);
 	
 	//TODO: serilize and unserilize
 
     std::map<COutPoint, Coin> coins;
-    for (size_t index = 0; index < uct.vin.size(); index++) {
-    	coins[COutPoint(txids.at(index), uct.vin.at(index).prevout().n())]; // Create empty map entry keyed by prevout.
+    for (size_t index = 0; index < uct.vin().size(); index++) {
+    	coins[COutPoint(txids.at(index), uct.vin().at(index).prevout().n())]; // Create empty map entry keyed by prevout.
     }
     rpc->GetCoins(coins);
     std::vector<CTxOut> outs;
-	for (size_t index = 0; index < uct.vin.size(); index++) {
-    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin.at(index).prevout().n())].out);
+	for (size_t index = 0; index < uct.vin().size(); index++) {
+    	outs.push_back(coins[COutPoint(txids.at(index), uct.vin().at(index).prevout().n())].out);
     }
     CTransaction new_tx = CTransaction(CMutableTransaction(ctx, uct, txids, outs));
     std::cout << "uctx: " << new_tx.ToString() << std::endl;
