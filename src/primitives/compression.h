@@ -186,9 +186,7 @@ public:
 		bool standardHash = (metadata & (0b1 << 3)) >> 3;
 		bool hashType = (metadata & (0b1 << 4)) >> 4;
 		bool standardSequence = (metadata & (0b1 << 5)) >> 5;
-		std::cout << "metadat: " << std::bitset<64>(metadata) << std::endl;
 		uint8_t sequenceEncoding = (metadata & (0b11 << 6)) >> 6;
-		std::cout << "sequence: " << sequenceEncoding << std::endl;
 
 		if (!constructor) this->m_prevout.Unserialize(s, compressedTxId);
 			
@@ -211,8 +209,6 @@ public:
 				s >> VARINT(m_hashType);	
 			}
 		} else m_hashType = 0;
-		std::cout << "TEST" << std::endl;
-		std::cout << standardSequence << std::endl;
 
 		if (standardSequence) {
 			std::cout << sequenceEncoding << std::endl;
@@ -223,7 +219,6 @@ public:
 		} else {
 			m_nSequence = std::numeric_limits<uint32_t>::max();
 			s >> VARINT(m_nSequence);
-			std::cout << "m =" << m_nSequence << std::endl;
 		}
 	}
 
@@ -238,42 +233,89 @@ public:
 
 class CCompressedTxOut
 {
+private:
+	std::vector<unsigned char> m_scriptPubKey;
+	TxoutType m_scriptType;
+    uint32_t m_nValue;
 public:
-	std::vector<unsigned char> scriptPubKey;
-	TxoutType scriptType;
-    uint32_t nValue;
+	const std::vector<unsigned char>& scriptPubKey() const { return m_scriptPubKey; }
+	const TxoutType& scriptType() const { return m_scriptType; }
+	const uint32_t& nValue() const { return m_nValue; }
 
-	explicit CCompressedTxOut();
 	explicit CCompressedTxOut(const CTxOut& txout);
 
 	bool IsCompressed() const {
-		return this->scriptType == TxoutType::PUBKEY || this->scriptType == TxoutType::PUBKEYHASH || this->scriptType == TxoutType::SCRIPTHASH || this->scriptType == TxoutType::WITNESS_V0_KEYHASH || this->scriptType == TxoutType::WITNESS_V0_SCRIPTHASH || this->scriptType == TxoutType::WITNESS_V1_TAPROOT;
-	}
-
-	uint8_t SerializeType() const {
-		if (this->scriptType == TxoutType::PUBKEY) return 1;
-		if (this->scriptType == TxoutType::PUBKEYHASH) return 2;
-		if (this->scriptType == TxoutType::SCRIPTHASH) return 3;
-		if (this->scriptType == TxoutType::WITNESS_V0_SCRIPTHASH) return 4;
-		if (this->scriptType == TxoutType::WITNESS_V0_KEYHASH) return 5;
-		if (this->scriptType == TxoutType::WITNESS_V1_TAPROOT) return 6;
-		return 0;
-	}
-	void UnserializeType(uint8_t outputTypeI) {
-		if (outputTypeI == 1) this->scriptType = TxoutType::PUBKEY;
-		if (outputTypeI == 2) this->scriptType = TxoutType::PUBKEYHASH;
-		if (outputTypeI == 3) this->scriptType = TxoutType::SCRIPTHASH;
-		if (outputTypeI == 4) this->scriptType = TxoutType::WITNESS_V0_SCRIPTHASH;
-		if (outputTypeI == 5) this->scriptType = TxoutType::WITNESS_V0_KEYHASH;
-		if (outputTypeI == 6) this->scriptType = TxoutType::WITNESS_V1_TAPROOT;
-		if (outputTypeI == 7) this->scriptType = TxoutType::NONSTANDARD;
-		if (outputTypeI > 7) throw std::ios_base::failure(strprintf("Script Type Deseralization must be 1-7, %s is not a valid Script Type.", ToString(outputTypeI)));
+		return this->m_scriptType == TxoutType::PUBKEY || this->m_scriptType == TxoutType::PUBKEYHASH || this->m_scriptType == TxoutType::SCRIPTHASH || this->m_scriptType == TxoutType::WITNESS_V0_KEYHASH || this->m_scriptType == TxoutType::WITNESS_V0_SCRIPTHASH || this->m_scriptType == TxoutType::WITNESS_V1_TAPROOT;
 	}
 
 	friend bool operator==(const CCompressedTxOut& a, const CCompressedTxOut& b)
 	{
-		return a.scriptPubKey == b.scriptPubKey && a.scriptType == b.scriptType && a.nValue == b.nValue;
+		return a.m_scriptPubKey == b.m_scriptPubKey && a.m_scriptType == b.m_scriptType && a.m_nValue == b.m_nValue;
 	}
+
+	uint8_t GetSerializedScriptType() const {
+		if (!this->m_scriptPubKey.size()) return 7;
+		if (this->m_scriptType == TxoutType::PUBKEY) return 1;
+		if (this->m_scriptType == TxoutType::PUBKEYHASH) return 2;
+		if (this->m_scriptType == TxoutType::SCRIPTHASH) return 3;
+		if (this->m_scriptType == TxoutType::WITNESS_V0_SCRIPTHASH) return 4;
+		if (this->m_scriptType == TxoutType::WITNESS_V0_KEYHASH) return 5;
+		if (this->m_scriptType == TxoutType::WITNESS_V1_TAPROOT) return 6;
+		return 0;
+	}
+
+	template <typename Stream>
+	inline void Serialize(Stream& s) const {
+		if (this->m_scriptPubKey.size()) {
+			if (!this->IsCompressed()) s << VARINT(this->m_scriptPubKey.size());
+			s.write(MakeByteSpan(this->m_scriptPubKey));
+		}
+		s << VARINT(this->m_nValue);
+	}
+
+	template <typename Stream>
+	inline void Unserialize(Stream& s, uint8_t& serializedScriptType) {
+		if (serializedScriptType == 0) {
+			this->m_scriptType = TxoutType::NONSTANDARD;
+		} else {
+			uint64_t scriptLength = std::numeric_limits<uint64_t>::max();
+			if (serializedScriptType == 1) {
+				scriptLength = 65;
+				this->m_scriptType = TxoutType::PUBKEY;
+			} else if (serializedScriptType == 2) {
+				scriptLength = 20;
+				this->m_scriptType = TxoutType::PUBKEYHASH;
+			} else if (serializedScriptType == 3) {
+				scriptLength = 65;
+				this->m_scriptType = TxoutType::SCRIPTHASH;
+			} else if (serializedScriptType == 4) {
+				scriptLength = 20;
+				this->m_scriptType = TxoutType::WITNESS_V0_SCRIPTHASH;
+			} else if (serializedScriptType == 5) {
+				scriptLength = 20;
+				this->m_scriptType = TxoutType::WITNESS_V0_KEYHASH;
+			} else if (serializedScriptType == 6) {
+				scriptLength = 32;
+				this->m_scriptType = TxoutType::WITNESS_V1_TAPROOT;
+			} else if (serializedScriptType == 7) {
+				s >> VARINT(scriptLength);
+				this->m_scriptType = TxoutType::NONSTANDARD;
+			} else {
+				throw std::ios_base::failure(strprintf("Script Type Deseralization must be 0-7, %u is not a valid Script Type.", serializedScriptType));
+			}
+			this->m_scriptPubKey.resize(scriptLength);
+			s.read(MakeWritableByteSpan(this->m_scriptPubKey));
+		}
+		this->m_nValue = std::numeric_limits<uint32_t>::max();
+		s >> VARINT(this->m_nValue);
+	}
+
+	template <typename Stream>
+	explicit CCompressedTxOut(deserialize_type, Stream& s, uint8_t& serializedScriptType) { 
+		Unserialize(s, serializedScriptType);
+	}
+
+    std::string ToString() const;
 };
 
 /** A compressed version of CTransaction. */
@@ -372,26 +414,15 @@ struct CCompressedTransaction
 		if (lockTime) s << VARINT(this->nLockTime);
 
 		for (size_t index = 0; index < std::max(this->vin.size(), this->vout.size()); index++) {
-			uint8_t scriptType = 7;
-			if (this->vout.size() > index) {
-				if (this->vout.at(index).scriptPubKey.size()) scriptType = this->vout.at(index).SerializeType();
-			}
 			uint64_t vControl = 0;
 			if (this->vin.size() > index) vControl = this->vin.at(index).GetMetadata();
-			vControl |= scriptType << 8;
+			uint8_t serializedScriptType = 0;
+			if (this->vout.size() > index) serializedScriptType = this->vout.at(index).GetSerializedScriptType();
+			vControl |= serializedScriptType << 8;
 			s << VARINT(vControl);
 			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
-
-			if (this->vin.size() > index) {
-				this->vin.at(index).Serialize(s);
-			}
-			if (this->vout.size() > index) {
-				if (scriptType != 7) {
-					if (!scriptType) s << VARINT(this->vout.at(index).scriptPubKey.size());
-					s.write(MakeByteSpan(this->vout.at(index).scriptPubKey));
-				}
-				s << VARINT(this->vout.at(index).nValue);
-			}
+			if (this->vin.size() > index) this->vin.at(index).Serialize(s);
+			if (this->vout.size() > index) this->vout.at(index).Serialize(s);
 		}
 	}
 
@@ -433,42 +464,10 @@ struct CCompressedTransaction
 			uint64_t vControl = std::numeric_limits<uint64_t>::max();
 			s >> VARINT(vControl);
 			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
-			uint8_t scriptType = (vControl & (0b111 << 8)) >> 8;
+			uint8_t serializedScriptType = (vControl & (0b111 << 8)) >> 8;
 
 			if (this->nInputCount > index) this->vin.push_back(CCompressedTxIn(deserialize, s, vControl));
-			if (this->nOutputCount > index) {
- 				std::cout << "output: " << index << std::endl;
-				CCompressedTxOut vout;
-				vout.UnserializeType(scriptType);
-
-				uint64_t scriptLength = std::numeric_limits<uint64_t>::max();
-				switch(scriptType) {
-					case 1:
-						scriptLength = 65;
-						break;
-					case 2:
-					case 3:
-					case 5:
-						scriptLength = 20;
-						break;
-					case 4:
-					case 6:
-						scriptLength = 32;
-						break;
-					case 7:
-						break;
-					default:
-						s >> VARINT(scriptLength);
-						break;
-				}
-				if (scriptType != 7) {
-					vout.scriptPubKey.resize(scriptLength);
-					s.read(MakeWritableByteSpan(vout.scriptPubKey));
-				}
-				vout.nValue = std::numeric_limits<uint32_t>::max();
-				s >> VARINT(vout.nValue);
-				this->vout.push_back(vout);
-			}
+			if (this->nOutputCount > index) this->vout.push_back(CCompressedTxOut(deserialize, s, serializedScriptType));
 		}
 	}
 

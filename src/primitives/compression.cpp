@@ -79,6 +79,33 @@ std::string CCompressedTxIn::ToString() const
 	m_nSequence);
 }
 
+CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
+	m_nValue = txout.nValue;
+	std::vector<std::vector<unsigned char>> solutions;
+	m_scriptType = Solver(txout.scriptPubKey, solutions);
+	switch (m_scriptType) {
+		case TxoutType::PUBKEY:
+		case TxoutType::PUBKEYHASH:
+		case TxoutType::SCRIPTHASH:
+		case TxoutType::WITNESS_V0_KEYHASH:
+		case TxoutType::WITNESS_V0_SCRIPTHASH:
+		case TxoutType::WITNESS_V1_TAPROOT:
+			m_scriptPubKey = solutions.at(0);
+			break;
+		default:
+			m_scriptPubKey.resize(txout.scriptPubKey.size());
+			copy(txout.scriptPubKey.begin(), txout.scriptPubKey.end(), m_scriptPubKey.begin());
+	}
+}
+
+std::string CCompressedTxOut::ToString() const
+{
+	return strprintf("CCompressedTxOut(scriptPubKey=%s, scriptType=%s, nValue=%u)",
+	HexStr(m_scriptPubKey),
+	GetTxnOutputType(m_scriptType),
+	m_nValue);
+}
+
 CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs) {
 	std::cout << "DECOMPRESS" << std::endl;
 	assert(outs.size() == tx.vin.size());
@@ -88,14 +115,14 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 		CScript script;
 		if (txout.IsCompressed()) {
 			std::vector<std::vector<unsigned char>> vSolutions;
-			vSolutions.push_back(std::move(txout.scriptPubKey));
+			vSolutions.push_back(std::move(txout.scriptPubKey()));
 			CTxDestination destination;
-			assert(BuildDestination(vSolutions, txout.scriptType, destination));
+			assert(BuildDestination(vSolutions, txout.scriptType(), destination));
 			script = GetScriptForDestination(destination);
 		} else {
-			script = CScript(txout.scriptPubKey.begin(), txout.scriptPubKey.end());
+			script = CScript(txout.scriptPubKey().begin(), txout.scriptPubKey().end());
 		}
-		vout.push_back(CTxOut(txout.nValue, script));
+		vout.push_back(CTxOut(txout.nValue(), script));
 	}
 	for (size_t index = 0; index < tx.vin.size(); index++) {
 		//empty scriptSig and scriptWitness
@@ -297,28 +324,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 
 
 
-CCompressedTxOut::CCompressedTxOut() : nValue(0) {};
-CCompressedTxOut::CCompressedTxOut(const CTxOut& txout) {
-	std::cout << "txout" << std::endl;
-	nValue = txout.nValue;
-	std::vector<std::vector<unsigned char>> solutions;
-	scriptType = Solver(txout.scriptPubKey, solutions);
-	std::cout << "solved" << std::endl;
-	switch (scriptType) {
-		case TxoutType::PUBKEY:
-		case TxoutType::PUBKEYHASH:
-		case TxoutType::SCRIPTHASH:
-		case TxoutType::WITNESS_V0_KEYHASH:
-		case TxoutType::WITNESS_V0_SCRIPTHASH:
-		case TxoutType::WITNESS_V1_TAPROOT:
-			scriptPubKey = solutions.at(0);
-			break;
-		default:
-			scriptPubKey.resize(txout.scriptPubKey.size());
-			copy(txout.scriptPubKey.begin(), txout.scriptPubKey.end(), scriptPubKey.begin());
-	}
-	std::cout << "txcp" << std::endl;
-}
+
 
 CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTransaction tx, const std::vector<CCompressedTxId>& txids, const std::vector<CScript>& scriptPubKeys) {
 	std::cout << "TESTESET: " << tx.ToString() << std::endl;
@@ -361,8 +367,6 @@ std::string CCompressedTransaction::ToString() const
 	for (const auto& txin : vin)
 		str += txin.ToString()+"\n";
 	for (const auto& txout : vout)
-		str += strprintf("	CCompressedTxOut:\n		scriptPubKey=%s\n		nValue=%u",
-		HexStr(txout.scriptPubKey),
-		txout.nValue);
+		str += txout.ToString()+"\n";
 	return str;
 }
