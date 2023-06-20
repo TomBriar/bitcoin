@@ -323,8 +323,6 @@ public:
 /** A compressed version of CTransaction. */
 struct CCompressedTransaction
 {
-    uint32_t nInputCount;
-    uint32_t nOutputCount;
 	uint32_t nVersion;
 	uint32_t nLockTime;
 	bool shortendLockTime;
@@ -343,7 +341,7 @@ struct CCompressedTransaction
 
 	friend bool operator==(const CCompressedTransaction& a, const CCompressedTransaction& b)
 	{
-		return a.nInputCount == b.nInputCount && a.nOutputCount == b.nOutputCount && a.nVersion == b.nVersion && a.nLockTime == b.nLockTime && a.shortendLockTime == b.shortendLockTime && a.vin == b.vin && a.vout == b.vout;
+		return a.nVersion == b.nVersion && a.nLockTime == b.nLockTime && a.shortendLockTime == b.shortendLockTime && a.vin == b.vin && a.vout == b.vout;
 	}
 
 	friend bool operator!=(const CCompressedTransaction& a, const CCompressedTransaction& b)
@@ -397,9 +395,9 @@ struct CCompressedTransaction
 		uint8_t version = 0;
 		if (this->nVersion < 4) version = this->nVersion;
 		uint8_t inputCount = 0;
-		if (this->nInputCount < 4) inputCount = this->nInputCount;
+		if (this->vin.size() < 4) inputCount = this->vin.size();
 		uint8_t outputCount = 0;
-		if (this->nOutputCount < 4) outputCount = this->nOutputCount;
+		if (this->vout.size() < 4) outputCount = this->vout.size();
 		uint8_t lockTime = 0;
 		if (this->shortendLockTime) lockTime = 1; else if (this->nLockTime != 0) lockTime = 2;
 
@@ -411,8 +409,8 @@ struct CCompressedTransaction
 		std::cout << "c: " << std::bitset<64>(control) << std::endl;
 
 		if (!version) s << VARINT(this->nVersion);
-		if (!inputCount) s << VARINT(this->nInputCount);
-		if (!outputCount) s << VARINT(this->nOutputCount);
+		if (!inputCount) s << VARINT(this->vin.size());
+		if (!outputCount) s << VARINT(this->vout.size());
 		if (lockTime) s << VARINT(this->nLockTime);
 
 		for (size_t index = 0; index < std::max(this->vin.size(), this->vout.size()); index++) {
@@ -438,6 +436,8 @@ struct CCompressedTransaction
 		uint8_t inputCount = (control & (0b11 << 2)) >> 2;
 		uint8_t outputCount = (control & (0b11 << 4)) >> 4;
 		uint8_t lockTime = (control & (0b11 << 6)) >> 6;
+		uint32_t nInputCount = std::numeric_limits<uint32_t>::max();
+		uint32_t nOutputCount = std::numeric_limits<uint32_t>::max();
 
 		if (!version) {
 			std::cout << "version varint" << std::endl;
@@ -446,14 +446,12 @@ struct CCompressedTransaction
 		} else this->nVersion = version;
 		if (!inputCount) {
 			std::cout << "input varint" << std::endl;
-			this->nInputCount = std::numeric_limits<uint32_t>::max();
-			s >> VARINT(this->nInputCount);
-		} else this->nInputCount = inputCount;
+			s >> VARINT(nInputCount);
+		} else nInputCount = inputCount;
 		if (!outputCount) {
 			std::cout << "output varint" << std::endl;
-			this->nOutputCount = std::numeric_limits<uint32_t>::max();
-			s >> VARINT(this->nOutputCount);
-		} else this->nOutputCount = outputCount;
+			s >> VARINT(nOutputCount);
+		} else nOutputCount = outputCount;
 		this->shortendLockTime = false;
 		if (lockTime) {
 			if (lockTime ==	1) this->shortendLockTime = true;
@@ -462,14 +460,14 @@ struct CCompressedTransaction
 			s >> VARINT(this->nLockTime);
 		} else this->nLockTime = lockTime;
 
-		for (size_t index = 0; index < std::max(this->nInputCount, this->nOutputCount); index++) {
+		for (size_t index = 0; index < std::max(nInputCount, nOutputCount); index++) {
 			uint64_t vControl = std::numeric_limits<uint64_t>::max();
 			s >> VARINT(vControl);
 			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
 			uint8_t serializedScriptType = (vControl & (0b111 << 8)) >> 8;
 
-			if (this->nInputCount > index) this->vin.push_back(CCompressedTxIn(deserialize, s, vControl));
-			if (this->nOutputCount > index) this->vout.push_back(CCompressedTxOut(deserialize, s, serializedScriptType));
+			if (nInputCount > index) this->vin.push_back(CCompressedTxIn(deserialize, s, vControl));
+			if (nOutputCount > index) this->vout.push_back(CCompressedTxOut(deserialize, s, serializedScriptType));
 		}
 	}
 

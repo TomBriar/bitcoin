@@ -328,8 +328,6 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 
 CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTransaction tx, const std::vector<CCompressedTxId>& txids, const std::vector<CScript>& scriptPubKeys) {
 	std::cout << "TESTESET: " << tx.ToString() << std::endl;
-	nInputCount = tx.vin.size();
-	nOutputCount = tx.vout.size(); 
 	nVersion = tx.nVersion; 
 	nLockTime = tx.nLockTime; 
 	shortendLockTime = false;
@@ -345,7 +343,7 @@ CCompressedTransaction::CCompressedTransaction(secp256k1_context* ctx, const CTr
 	std::cout << "stupid" << std::endl;
 	uint32_t limit = pow(2, 16);
 	if (tx.nLockTime > limit) {
-		for (uint32_t i = 0; i < nInputCount; i++) {
+		for (uint32_t i = 0; i < tx.vin.size(); i++) {
 			if (vin.at(i).compressedSignature()) {
 				nLockTime = tx.nLockTime % limit;
 				shortendLockTime = true;
@@ -359,8 +357,8 @@ std::string CCompressedTransaction::ToString() const
 {
 	std::string str;
 	str += strprintf("CCompressedTransaction:\n	InputCount=%u,\n	nOutputCount=%u,\n	nVersion=%u,\n	nLockTime=%u\n,	shortendlocktim=%b\n",
-	nInputCount,
-	nOutputCount,
+	vin.size(),
+	vout.size(),
 	nVersion,
 	nLockTime,
 	shortendLockTime);

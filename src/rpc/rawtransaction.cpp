@@ -544,12 +544,12 @@ static RPCHelpMan decompressrawtransaction()
 
     if (DecodeCompressedHexTx(ctx, request.params[0].get_str())) {
 		std::vector<uint256> txids;
-		if (ctx.nInputCount > 0) {
+		if (ctx.vin.size() > 0) {
 			std::vector<CBlockIndex*> blocks;
 			blocks = blockman->GetAllBlockIndices();
 			int blocks_length = blocks.size();
 
-			for (size_t index = 0; index < ctx.nInputCount; index++) {
+			for (size_t index = 0; index < ctx.vin.size(); index++) {
 				if (ctx.vin.at(index).prevout().txid().IsCompressed()) {
 					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
 						const CBlockIndex* pindex{nullptr};
@@ -569,12 +569,12 @@ static RPCHelpMan decompressrawtransaction()
 		}
 
 		std::map<COutPoint, Coin> coins; 
-		for (size_t index = 0; index < ctx.nInputCount; index++) { 
+		for (size_t index = 0; index < ctx.vin.size(); index++) { 
 			coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout().n())]; // Create empty map entry keyed by prevout.
 		} 
 		FindCoins(node, coins);
 		std::vector<CTxOut> outs;
-		for (size_t index = 0; index < ctx.nInputCount; index++) { 
+		for (size_t index = 0; index < ctx.vin.size(); index++) { 
 			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin.at(index).prevout().n())].out); 
 		}
 		return EncodeHexTx(CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs)));
