@@ -468,8 +468,6 @@ static RPCHelpMan compressrawtransaction()
 	CMutableTransaction mtx;
 	std::string error = "";
 
-	std::cout << "init"	<< std::endl;
-
 	std::vector<CScript> input_scripts;
 	std::vector<CCompressedTxId> txids;
     if (DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {

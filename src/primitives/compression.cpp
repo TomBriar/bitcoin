@@ -145,33 +145,36 @@ std::string CCompressedTransaction::ToString() const
 	return str;
 }
 
+CTxOut::CTxOut(const CCompressedTxOut& txout) {
+	if (txout.IsCompressed()) {
+		std::vector<std::vector<unsigned char>> vSolutions;
+		vSolutions.push_back(std::move(txout.scriptPubKey()));
+		CTxDestination destination;
+		if(BuildDestination(vSolutions, txout.scriptType(), destination)) throw std::ios_base::failure("Script Deseralization Faild, Either Invalid Payload or Script Type.");
+		scriptPubKey = GetScriptForDestination(destination);
+	} else {
+		scriptPubKey = CScript(txout.scriptPubKey().begin(), txout.scriptPubKey().end());
+	}
+	nValue = txout.nValue();
+}
+
+//TODO: Accept custom class for txids, outs, tx
 CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs) {
-	std::cout << "DECOMPRESS" << std::endl;
 	assert(outs.size() == tx.vin().size());
+	/* Set Values */
 	nVersion = tx.nVersion();
 	nLockTime = tx.nLockTime();
 	for (const auto& txout : tx.vout()) {
-		CScript script;
-		if (txout.IsCompressed()) {
-			std::vector<std::vector<unsigned char>> vSolutions;
-			vSolutions.push_back(std::move(txout.scriptPubKey()));
-			CTxDestination destination;
-			assert(BuildDestination(vSolutions, txout.scriptType(), destination));
-			script = GetScriptForDestination(destination);
-		} else {
-			script = CScript(txout.scriptPubKey().begin(), txout.scriptPubKey().end());
-		}
-		vout.push_back(CTxOut(txout.nValue(), script));
+		vout.push_back(CTxOut(txout));
 	}
 	for (size_t index = 0; index < tx.vin().size(); index++) {
-		//empty scriptSig and scriptWitness
 		vin.push_back(CTxIn(COutPoint(txids.at(index), tx.vin().at(index).prevout().n()), CScript(), tx.vin().at(index).nSequence()));
 	}
 
+	/* Recover Sigantures*/
 	for (size_t index = 0; index < tx.vin().size(); index++) {
-		std::cout << "vin" << std::endl;
-		std::cout << "outs size = " << outs.size() << std::endl;
 		if (tx.vin().at(index).compressedSignature()) {
+			/* Parse Signatures */
 			std::vector<secp256k1_ecdsa_recoverable_signature> recoverableSignatures;
 			if (outs.at(index).scriptPubKey.IsPayToPublicKeyHash() || outs.at(index).scriptPubKey.IsPayToWitnessPublicKeyHash()) {
 				for (int recoveryId = 0; recoveryId < 4; recoveryId++) {
@@ -183,14 +186,15 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 		 	} else if (outs.at(index).scriptPubKey.IsPayToTaproot()) {
 				std::vector<std::vector<unsigned char>> stack;
 				stack.push_back(tx.vin().at(index).signature());
-				if (tx.vin().at(index).hashType())
-					stack[0].push_back(tx.vin().at(index).hashType());
+				if (tx.vin().at(index).hashType()) stack[0].push_back(tx.vin().at(index).hashType());
 				vin.at(index).scriptWitness.stack = stack;
 			}
+
 			bool lockTimeFound = false;
 			while(!lockTimeFound) {
 				if (outs.at(index).scriptPubKey.IsPayToPublicKeyHash() || outs.at(index).scriptPubKey.IsPayToWitnessPublicKeyHash()) {
-					std::cout << "P2PKH || P2WPKH" << std::endl;
+					/* Generate Message as Hash of the Transaction */
+					std::vector<unsigned char> message(32);
 					uint256 hash;
 					if (outs.at(index).scriptPubKey.IsPayToPublicKeyHash()) {
 						hash = SignatureHash(outs.at(index).scriptPubKey, *this, index, tx.vin().at(index).hashType(), outs.at(index).nValue, SigVersion::BASE);
@@ -202,10 +206,9 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 						CScript scriptCode = GetScriptForDestination(destination);
 						hash = SignatureHash(scriptCode, *this, index, tx.vin().at(index).hashType(), outs.at(index).nValue, SigVersion::WITNESS_V0);
 					}
-					std::vector<unsigned char> message(32);
                     copy(hash.begin(), hash.end(), message.begin());
 
-                    /* Dervive Sig Public Key Pairs */
+                    /* Dervive Signature Public Key Pairs */
                     for (auto const& rsig : recoverableSignatures) {
                         secp256k1_pubkey pubkey;
 						secp256k1_ecdsa_signature sig;
@@ -220,7 +223,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 							uint160 cpHash;
 							CHash160().Write(cpVec).Finalize(cpHash);
 
-							/* Generate Address */
+							/* Generate Compressed Address */
 							std::vector<unsigned char> cpHashVec(20);
 							copy(cpHash.begin(), cpHash.end(), cpHashVec.begin());
 							std::vector<std::vector<unsigned char>> cpVSolutions;
@@ -233,6 +236,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 							}	
 							CScript cpScriptPubKey = GetScriptForDestination(cpDestination);
 
+							/* Test Compressed Address*/
 							std::vector<unsigned char> pVec;
 							size_t pSize = 0;
 							if (cpScriptPubKey == outs.at(index).scriptPubKey) {
@@ -249,7 +253,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 								uint160 ucpHash;
 								CHash160().Write(ucpVec).Finalize(ucpHash);
 
-								/* Generate Address */
+								/* Generate Uncompressed Address */
 								std::vector<unsigned char> ucpHashVec(20);
 								copy(ucpHash.begin(), ucpHash.end(), ucpHashVec.begin());
 								std::vector<std::vector<unsigned char>> ucpVSolutions;
@@ -257,13 +261,15 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 								CTxDestination ucpDestination;
 								BuildDestination(ucpVSolutions, TxoutType::PUBKEYHASH, ucpDestination);
 								CScript ucpScriptPubKey = GetScriptForDestination(ucpDestination);
+		
+								/* Test Uncompressed Address*/
 								if (ucpScriptPubKey == outs.at(index).scriptPubKey) {
 									pVec = std::move(ucpVec);
 									pSize = ucpSize;
 								} 
 							}
 
-							/* Test Scripts */
+							/* If Testing was Sucessful Recover Signature */
 							if (pVec.size()) {
 								secp256k1_ecdsa_recoverable_signature_convert(ctx, &sig, &rsig);
 								lockTimeFound = true;
@@ -294,7 +300,6 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 						};
                     }
 				} else if (outs.at(index).scriptPubKey.IsPayToTaproot()) {
-					std::cout << "P2TR\n";
 					std::vector<unsigned char> schnorr_signature = tx.vin().at(index).signature();
 
 					/* Script Execution Data Init */
@@ -308,35 +313,27 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 
 					/* Compute Signature Hash */
 					uint256 hash;
-					int r = SignatureHashSchnorr(hash, execdata, *this, index, tx.vin().at(index).hashType(), SigVersion::TAPROOT, cache, MissingDataBehavior::FAIL);
-
-					if (!r) {
-						std::cout << "FAILURE SCHNORR HASH\n";
-					}
-					std::cout << "message = "+hash.GetHex()+"\n";
+					assert(SignatureHashSchnorr(hash, execdata, *this, index, tx.vin().at(index).hashType(), SigVersion::TAPROOT, cache, MissingDataBehavior::FAIL));
+					
+					/* Recover Public Key*/
 					std::vector<unsigned char> pubkey_bytes;
 					std::vector<std::vector<unsigned char>> vSolutions;
 					assert(Solver(outs.at(index).scriptPubKey, vSolutions) == TxoutType::WITNESS_V1_TAPROOT);
 					secp256k1_xonly_pubkey xonly_pubkey;
-					r = secp256k1_xonly_pubkey_parse(ctx, &xonly_pubkey, &(vSolutions[0])[0]);
-					if (!r) {
-						std::cout << "FAILURE: ISSUE PUBKEY PARSE\n";
-					}
-
-					r = secp256k1_schnorrsig_verify(ctx, &tx.vin().at(index).signature()[0], hash.begin(), 32, &xonly_pubkey);
-					if (!r) {
-						std::cout << "FAILURE: Issue verifiy\n";
-					} else {
-						lockTimeFound = true;
-					}
-				} else {
-					std::cout << "no deserlie impl" << std::endl;
-					assert(false);
+					assert(secp256k1_xonly_pubkey_parse(ctx, &xonly_pubkey, &(vSolutions[0])[0]));
+						
+					if (secp256k1_schnorrsig_verify(ctx, &tx.vin().at(index).signature()[0], hash.begin(), 32, &xonly_pubkey)) lockTimeFound = true;
 				}
-				if (!tx.shortendLockTime() || lockTimeFound) {lockTimeFound = true;} else {nLockTime += pow(2, 16);}
+
+				/* If Testing was Unsuccessful Continue to Grid Locktime */
+				if (!tx.shortendLockTime() || lockTimeFound) { 
+					lockTimeFound = true; 
+				} else {
+					if (nLockTime > uint32_t(nLockTime + pow(2, 16))) break;
+					nLockTime += pow(2, 16);
+				}
 			}
 		} else if (tx.vin().at(index).IsSigned()) {
-			std::cout << "deserlize" << std::endl;
 			CDataStream stream(SER_DISK, 0);
 			stream.write(MakeByteSpan(tx.vin().at(index).signature()));
 			uint64_t scriptSigLength = std::numeric_limits<uint64_t>::max();

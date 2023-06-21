@@ -387,7 +387,7 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 	CMutableTransaction mtx;
 
 	mtx.nVersion = fdp.ConsumeIntegral<uint32_t>();
-	mtx.nLockTime = fdp.ConsumeIntegral<uint8_t>();
+	mtx.nLockTime = fdp.ConsumeIntegral<uint32_t>();
 
 	uint32_t total = 0;
 	std::vector<CScript> input_scripts;
@@ -453,36 +453,20 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 	if (sign)
 		assert(rpc->SignTransaction(ctx, mtx, keypairs));
 
-	std::cout << "tx: " << CTransaction(mtx).ToString() << std::endl;
+	std::cout << "sttx: " << CTransaction(mtx).ToString() << std::endl;
 
     const CTransaction tx = CTransaction(mtx);
     CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
-	std::cout << "doneou" << std::endl;
 	
     std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
-//	CCompressedTransaction uct = compressed_transaction;
-////std::cout << "precompressed: " << compressed_transaction.vin.at(0).ToString() << std::endl;
-////CDataStream stre(SER_DISK, 0);
-////uint64_t metadata = compressed_transaction.vin.at(0).GetMetaData();
-////std::cout << "metadata: " << std::bitset<64>(metadata) << std::endl;
-////compressed_transaction.vin.at(0).Serialize(stre);
-////std::cout << "stream: " << HexStr(stre) << std::endl;
-////CCompressedTxIn txin = CCompressedTxIn(deserialize, stre, metadata);
-////std::cout << "decompressed: " << txin.ToString() << std::endl;
-
-
-////assert(false);
 
     CDataStream stream(SER_DISK, 0);
     compressed_transaction.Serialize(stream);
-	std::cout << "SERIALIZED: " << HexStr(stream) << std::endl;
     CCompressedTransaction uct = CCompressedTransaction(deserialize, stream);
     
-    std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
     std::cout << "uct: " << uct.ToString() << std::endl;
     assert(compressed_transaction == uct);
 	
-	//TODO: serilize and unserilize
 
     std::map<COutPoint, Coin> coins;
     for (size_t index = 0; index < uct.vin().size(); index++) {

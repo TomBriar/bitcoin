@@ -151,6 +151,8 @@ public:
     std::string ToString() const;
 };
 
+struct CCompressedTxOut;
+
 /** An output of a transaction.  It contains the public key that the next input
  * must be able to sign with to claim it.
  */
@@ -165,6 +167,7 @@ public:
         SetNull();
     }
 
+    CTxOut(const CCompressedTxOut& txout);
     CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn);
 
     SERIALIZE_METHODS(CTxOut, obj) { READWRITE(obj.nValue, obj.scriptPubKey); }

@@ -239,8 +239,6 @@ bool BuildDestination(const std::vector<std::vector<unsigned char>>& vSolutions,
 	if (!vSolutions.size()) 
 		return false;
 
-	std::cout << "scriptType = " << GetTxnOutputType(scriptType) << std::endl;
-
 	switch (scriptType) {
     case TxoutType::PUBKEY: {
         CPubKey pubKey(vSolutions[0]);

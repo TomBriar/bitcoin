@@ -211,7 +211,6 @@ public:
 		} else m_hashType = 0;
 
 		if (standardSequence) {
-			std::cout << sequenceEncoding << std::endl;
 			if (sequenceEncoding == 0x01) m_nSequence = 0xFFFFFFF0;
 			if (sequenceEncoding == 0x02) m_nSequence = 0xFFFFFFFE;
 			if (sequenceEncoding == 0x03) m_nSequence = 0xFFFFFFFF;
@@ -303,8 +302,6 @@ public:
 			} else {
 				throw std::ios_base::failure(strprintf("Script Type Deseralization must be 0-7, %u is not a valid Script Type.", serializedScriptType));
 			}
-			std::cout << "scriptlen " << scriptLength << std::endl;
-			std::cout << "scrity " << GetTxnOutputType(this->m_scriptType) << std::endl;
 			this->m_scriptPubKey.resize(scriptLength);
 			s.read(MakeWritableByteSpan(this->m_scriptPubKey));
 		}
@@ -411,7 +408,6 @@ public:
 		control |= outputCount << 4;
 		control |= lockTime << 6;
 		s << VARINT(control);
-		std::cout << "c: " << std::bitset<64>(control) << std::endl;
 
 		if (!version) s << VARINT(this->m_nVersion);
 		if (!inputCount) s << VARINT(this->m_vin.size());
@@ -425,7 +421,6 @@ public:
 			if (this->m_vout.size() > index) serializedScriptType = this->m_vout.at(index).GetSerializedScriptType();
 			vControl |= serializedScriptType << 8;
 			s << VARINT(vControl);
-			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
 			if (this->m_vin.size() > index) this->m_vin.at(index).Serialize(s);
 			if (this->m_vout.size() > index) this->m_vout.at(index).Serialize(s);
 		}
@@ -433,10 +428,8 @@ public:
 
 	template <typename Stream>
 	inline void Unserialize(Stream& s) {
-		std::cout << "desirialize" << std::endl;
 		uint64_t control = std::numeric_limits<uint64_t>::max();
 		s >> VARINT(control);
-		std::cout << "c: " << std::bitset<64>(control) << std::endl;
 		uint8_t version = control & 0b11;
 		uint8_t inputCount = (control & (0b11 << 2)) >> 2;
 		uint8_t outputCount = (control & (0b11 << 4)) >> 4;
@@ -445,22 +438,18 @@ public:
 		uint32_t nOutputCount = std::numeric_limits<uint32_t>::max();
 
 		if (!version) {
-			std::cout << "version varint" << std::endl;
 			this->m_nVersion = std::numeric_limits<uint32_t>::max();
 			s >> VARINT(this->m_nVersion);
 		} else this->m_nVersion = version;
 		if (!inputCount) {
-			std::cout << "input varint" << std::endl;
 			s >> VARINT(nInputCount);
 		} else nInputCount = inputCount;
 		if (!outputCount) {
-			std::cout << "output varint" << std::endl;
 			s >> VARINT(nOutputCount);
 		} else nOutputCount = outputCount;
 		this->m_shortendLockTime = false;
 		if (lockTime) {
 			if (lockTime ==	1) this->m_shortendLockTime = true;
-			std::cout << "lock varint" << std::endl;
 			this->m_nLockTime = std::numeric_limits<uint32_t>::max();
 			s >> VARINT(this->m_nLockTime);
 		} else this->m_nLockTime = lockTime;
@@ -468,7 +457,6 @@ public:
 		for (size_t index = 0; index < std::max(nInputCount, nOutputCount); index++) {
 			uint64_t vControl = std::numeric_limits<uint64_t>::max();
 			s >> VARINT(vControl);
-			std::cout << "vc: " << std::bitset<64>(vControl) << std::endl;
 			uint8_t serializedScriptType = (vControl & (0b111 << 8)) >> 8;
 
 			if (nInputCount > index) this->m_vin.push_back(CCompressedTxIn(deserialize, s, vControl));
