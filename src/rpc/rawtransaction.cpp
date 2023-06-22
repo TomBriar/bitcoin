@@ -567,14 +567,25 @@ static RPCHelpMan compressrawtransaction()
 				//If the transaction was found abovej
 				if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
 					if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
-						txids.push_back(CCompressedTxId(block_height, block_index));
-						compressed_txid = false;	
+						{
+							LOCK(cs_main);
+							Chainstate& active_chainstate = chainman.ActiveChainstate();
+
+							const CBlockIndex& tip{*CHECK_NONFATAL(active_chainstate.m_chain.Tip())};
+							const int height{tip.nHeight};
+							if ((height-100) >= int(block_height)) {
+								txids.push_back(CCompressedTxId(block_height, block_index));
+								compressed_txid = true;	
+							} else {
+								error = strprintf("UTXO (%u): Is not older then one hundred blocks and so we will not compress the TXID", index);
+							}
+						}
 					}
 				}
 			}
 			if (!compressed_txid) {
 				txids.push_back(CCompressedTxId(mtx.vin.at(index).prevout.hash));
-				error = "Could not find Transaction Index to Compress";
+				error = strprintf("UTXO (%u): Could not find Transaction Index to Compress", index);
 			} 
 		}
 	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
