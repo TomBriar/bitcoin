@@ -23,7 +23,7 @@
 
 namespace {
 	struct TXDecompressionFuzzTestingSetup : public TestingSetup {
-		TXDecompressionFuzzTestingSetup(const std::string& chain_name, const std::vector<const char*>& extra_args) : TestingSetup{chain_name, extra_args} 
+		TXDecompressionFuzzTestingSetup(const ChainType& chain_type, const std::vector<const char*>& extra_args) : TestingSetup{chain_type, extra_args} 
 		{}
 
     	UniValue CallRPC(const std::string& rpc_method, const std::vector<std::string>& arguments)
@@ -51,7 +51,6 @@ namespace {
 
 void tx_decompression_initialize()
 {
-    SelectParams(CBaseChainParams::REGTEST);
 	rpc = InitializeTXDecompressionFuzzTestingSetup();
 }
 
@@ -64,7 +63,7 @@ FUZZ_TARGET_INIT(tx_decompression, tx_decompression_initialize)
 	try {
     	rpc->CallRPC(rpc_method, arguments);
 	} catch (const UniValue& json_rpc_error) {
-		const std::string error_msg{find_value(json_rpc_error, "message").get_str()};
+		const std::string error_msg{json_rpc_error.find_value("message").get_str()};
 		std::cout << "ERROR: " << error_msg << std::endl;
 		// Once c++20 is allowed, starts_with can be used.
 		// if (error_msg.starts_with("Internal bug detected")) {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2018-2021 The Bitcoin Core developers
+# Copyright (c) 2018-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test wallet group functionality."""
@@ -41,6 +41,11 @@ class WalletGroupTest(BitcoinTestFramework):
 
     def run_test(self):
         self.log.info("Setting up")
+        # To take full use of immediate tx relay, all nodes need to be reachable
+        # via inbound peers, i.e. connect first to last to close the circle
+        # (the default test network topology looks like this:
+        #  node0 <-- node1 <-- node2 <-- node3 <-- node4 <-- node5)
+        self.connect_nodes(0, self.num_nodes - 1)
         # Mine some coins
         self.generate(self.nodes[0], COINBASE_MATURITY + 1)
 

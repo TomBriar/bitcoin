@@ -1,18 +1,20 @@
-// Copyright (c) 2017-2021 The Bitcoin Core developers
+// Copyright (c) 2017-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chainparams.h>
+#include <common/args.h>
 #include <index/base.h>
 #include <interfaces/chain.h>
 #include <kernel/chain.h>
+#include <logging.h>
 #include <node/blockstorage.h>
 #include <node/context.h>
+#include <node/database_args.h>
 #include <node/interface_ui.h>
 #include <shutdown.h>
 #include <tinyformat.h>
 #include <util/syscall_sandbox.h>
-#include <util/system.h>
 #include <util/thread.h>
 #include <util/translation.h>
 #include <validation.h> // For g_chainman
@@ -20,8 +22,6 @@
 
 #include <string>
 #include <utility>
-
-using node::ReadBlockFromDisk;
 
 constexpr uint8_t DB_BEST_BLOCK{'B'};
 
@@ -34,7 +34,7 @@ static void FatalError(const char* fmt, const Args&... args)
     std::string strMessage = tfm::format(fmt, args...);
     SetMiscWarning(Untranslated(strMessage));
     LogPrintf("*** %s\n", strMessage);
-    AbortError(_("A fatal internal error occurred, see debug.log for details"));
+    InitError(_("A fatal internal error occurred, see debug.log for details"));
     StartShutdown();
 }
 
@@ -48,7 +48,13 @@ CBlockLocator GetLocator(interfaces::Chain& chain, const uint256& block_hash)
 }
 
 BaseIndex::DB::DB(const fs::path& path, size_t n_cache_size, bool f_memory, bool f_wipe, bool f_obfuscate) :
-    CDBWrapper(path, n_cache_size, f_memory, f_wipe, f_obfuscate)
+    CDBWrapper{DBParams{
+        .path = path,
+        .cache_bytes = n_cache_size,
+        .memory_only = f_memory,
+        .wipe_data = f_wipe,
+        .obfuscate = f_obfuscate,
+        .options = [] { DBOptions options; node::ReadDatabaseArgs(gArgs, options); return options; }()}}
 {}
 
 bool BaseIndex::DB::ReadBestBlock(CBlockLocator& locator) const
@@ -151,8 +157,6 @@ void BaseIndex::ThreadSync()
     SetSyscallSandboxPolicy(SyscallSandboxPolicy::TX_INDEX);
     const CBlockIndex* pindex = m_best_block_index.load();
     if (!m_synced) {
-        auto& consensus_params = Params().GetConsensus();
-
         std::chrono::steady_clock::time_point last_log_time{0s};
         std::chrono::steady_clock::time_point last_locator_write_time{0s};
         while (true) {
@@ -199,7 +203,7 @@ void BaseIndex::ThreadSync()
 
             CBlock block;
             interfaces::BlockInfo block_info = kernel::MakeBlockInfo(pindex);
-            if (!ReadBlockFromDisk(block, pindex, consensus_params)) {
+            if (!m_chainstate->m_blockman.ReadBlockFromDisk(block, *pindex)) {
                 FatalError("%s: Failed to read block %s from disk",
                            __func__, pindex->GetBlockHash().ToString());
                 return;
@@ -415,8 +419,9 @@ IndexSummary BaseIndex::GetSummary() const
     return summary;
 }
 
-void BaseIndex::SetBestBlockIndex(const CBlockIndex* block) {
-    assert(!node::fPruneMode || AllowPrune());
+void BaseIndex::SetBestBlockIndex(const CBlockIndex* block)
+{
+    assert(!m_chainstate->m_blockman.IsPruneMode() || AllowPrune());
 
     if (AllowPrune() && block) {
         node::PruneLockInfo prune_lock;

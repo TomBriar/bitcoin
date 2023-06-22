@@ -1,10 +1,12 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2021 The Bitcoin Core developers
+// Copyright (c) 2009-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <rpc/server.h>
 
+#include <common/args.h>
+#include <logging.h>
 #include <rpc/util.h>
 #include <shutdown.h>
 #include <sync.h>
@@ -83,6 +85,7 @@ std::string CRPCTable::help(const std::string& strCommand, const JSONRPCRequest&
     std::string category;
     std::set<intptr_t> setDone;
     std::vector<std::pair<std::string, const CRPCCommand*> > vCommands;
+    vCommands.reserve(mapCommands.size());
 
     for (const auto& entry : mapCommands)
         vCommands.push_back(make_pair(entry.second.front()->category + entry.first, entry.second.front()));
@@ -168,7 +171,7 @@ static RPCHelpMan stop()
     // to the client (intended for testing)
                 "\nRequest a graceful shutdown of " PACKAGE_NAME ".",
                 {
-                    {"wait", RPCArg::Type::NUM, RPCArg::Optional::OMITTED_NAMED_ARG, "how long to wait in ms", RPCArgOptions{.hidden=true}},
+                    {"wait", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "how long to wait in ms", RPCArgOptions{.hidden=true}},
                 },
                 RPCResult{RPCResult::Type::STR, "", "A string with the content '" + RESULT + "'"},
                 RPCExamples{""},
@@ -399,7 +402,10 @@ static inline JSONRPCRequest transformNamedArguments(const JSONRPCRequest& in, c
     const std::vector<UniValue>& values = in.params.getValues();
     std::unordered_map<std::string, const UniValue*> argsIn;
     for (size_t i=0; i<keys.size(); ++i) {
-        argsIn[keys[i]] = &values[i];
+        auto [_, inserted] = argsIn.emplace(keys[i], &values[i]);
+        if (!inserted) {
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Parameter " + keys[i] + " specified multiple times");
+        }
     }
     // Process expected parameters. If any parameters were left unspecified in
     // the request before a parameter that was specified, null values need to be
@@ -510,6 +516,7 @@ static bool ExecuteCommand(const CRPCCommand& command, const JSONRPCRequest& req
 std::vector<std::string> CRPCTable::listCommands() const
 {
     std::vector<std::string> commandList;
+    commandList.reserve(mapCommands.size());
     for (const auto& i : mapCommands) commandList.emplace_back(i.first);
     return commandList;
 }

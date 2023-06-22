@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2017-2021 The Bitcoin Core developers
+# Copyright (c) 2017-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test various command line arguments and configuration file parameters."""
@@ -126,7 +126,6 @@ class ConfArgsTest(BitcoinTestFramework):
                 expected_msgs=[
                     'Command-line arg: addnode="some.node"',
                     'Command-line arg: rpcauth=****',
-                    'Command-line arg: rpcbind=****',
                     'Command-line arg: rpcpassword=****',
                     'Command-line arg: rpcuser=****',
                     'Command-line arg: torpassword=****',
@@ -135,14 +134,17 @@ class ConfArgsTest(BitcoinTestFramework):
                 ],
                 unexpected_msgs=[
                     'alice:f7efda5c189b999524f151318c0c86$d5b51b3beffbc0',
-                    '127.1.1.1',
                     'secret-rpcuser',
                     'secret-torpassword',
+                    'Command-line arg: rpcbind=****',
+                    'Command-line arg: rpcallowip=****',
                 ]):
             self.start_node(0, extra_args=[
                 '-addnode=some.node',
                 '-rpcauth=alice:f7efda5c189b999524f151318c0c86$d5b51b3beffbc0',
                 '-rpcbind=127.1.1.1',
+                '-rpcbind=127.0.0.1',
+                "-rpcallowip=127.0.0.1",
                 '-rpcpassword=',
                 '-rpcuser=secret-rpcuser',
                 '-torpassword=secret-torpassword',
@@ -249,11 +251,43 @@ class ConfArgsTest(BitcoinTestFramework):
         ]):
             self.nodes[0].setmocktime(start + 65)
 
+    def test_connect_with_seednode(self):
+        self.log.info('Test -connect with -seednode')
+        seednode_ignored = ['-seednode is ignored when -connect is used\n']
+        dnsseed_ignored = ['-dnsseed is ignored when -connect is used and -proxy is specified\n']
+        addcon_thread_started = ['addcon thread start\n']
+        self.stop_node(0)
+
+        # When -connect is supplied, expanding addrman via getaddr calls to ADDR_FETCH(-seednode)
+        # nodes is irrelevant and -seednode is ignored.
+        with self.nodes[0].assert_debug_log(expected_msgs=seednode_ignored):
+            self.start_node(0, extra_args=['-connect=fakeaddress1', '-seednode=fakeaddress2'])
+
+        # With -proxy, an ADDR_FETCH connection is made to a peer that the dns seed resolves to.
+        # ADDR_FETCH connections are not used when -connect is used.
+        with self.nodes[0].assert_debug_log(expected_msgs=dnsseed_ignored):
+            self.restart_node(0, extra_args=['-connect=fakeaddress1', '-dnsseed=1', '-proxy=1.2.3.4'])
+
+        # If the user did not disable -dnsseed, but it was soft-disabled because they provided -connect,
+        # they shouldn't see a warning about -dnsseed being ignored.
+        with self.nodes[0].assert_debug_log(expected_msgs=addcon_thread_started,
+                unexpected_msgs=dnsseed_ignored):
+            self.restart_node(0, extra_args=['-connect=fakeaddress1', '-proxy=1.2.3.4'])
+
+        # We have to supply expected_msgs as it's a required argument
+        # The expected_msg must be something we are confident will be logged after the unexpected_msg
+        # These cases test for -connect being supplied but only to disable it
+        for connect_arg in ['-connect=0', '-noconnect']:
+            with self.nodes[0].assert_debug_log(expected_msgs=addcon_thread_started,
+                    unexpected_msgs=seednode_ignored):
+                self.restart_node(0, extra_args=[connect_arg, '-seednode=fakeaddress2'])
+
     def run_test(self):
         self.test_log_buffer()
         self.test_args_log()
         self.test_seed_peers()
         self.test_networkactive()
+        self.test_connect_with_seednode()
 
         self.test_config_file_parser()
         self.test_invalid_command_line_options()

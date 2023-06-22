@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2017-2021 The Bitcoin Core developers
+# Copyright (c) 2017-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Class for bitcoind node under test"""
@@ -337,7 +337,7 @@ class TestNode():
             return
         self.log.debug("Stopping node")
         try:
-            # Do not use wait argument when testing older nodes, e.g. in feature_backwards_compatibility.py
+            # Do not use wait argument when testing older nodes, e.g. in wallet_backwards_compatibility.py
             if self.version_is_at_least(180000):
                 self.stop(wait=wait)
             else:
@@ -386,6 +386,21 @@ class TestNode():
 
     def wait_until_stopped(self, timeout=BITCOIND_PROC_WAIT_TIMEOUT):
         wait_until_helper(self.is_node_stopped, timeout=timeout, timeout_factor=self.timeout_factor)
+
+    def replace_in_config(self, replacements):
+        """
+        Perform replacements in the configuration file.
+        The substitutions are passed as a list of search-replace-tuples, e.g.
+            [("old", "new"), ("foo", "bar"), ...]
+        """
+        with open(self.bitcoinconf, 'r', encoding='utf8') as conf:
+            conf_data = conf.read()
+        for replacement in replacements:
+            assert_equal(len(replacement), 2)
+            old, new = replacement[0], replacement[1]
+            conf_data = conf_data.replace(old, new)
+        with open(self.bitcoinconf, 'w', encoding='utf8') as conf:
+            conf.write(conf_data)
 
     @property
     def chain_path(self) -> Path:
@@ -454,7 +469,7 @@ class TestNode():
                 return
 
             if time.time() >= time_end:
-                print_log = " - " + "\n - ".join(log.splitlines())
+                print_log = " - " + "\n - ".join(log.decode("utf8", errors="replace").splitlines())
                 break
 
             # No sleep here because we want to detect the message fragment as fast as
@@ -730,7 +745,7 @@ class TestNodeCLI():
             p_args += [command]
         p_args += pos_args + named_args
         self.log.debug("Running bitcoin-cli {}".format(p_args[2:]))
-        process = subprocess.Popen(p_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+        process = subprocess.Popen(p_args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         cli_stdout, cli_stderr = process.communicate(input=self.input)
         returncode = process.poll()
         if returncode:
@@ -814,7 +829,7 @@ class RPCOverloadWrapper():
             int(address ,16)
             is_hex = True
             desc = descsum_create('raw(' + address + ')')
-        except:
+        except Exception:
             desc = descsum_create('addr(' + address + ')')
         reqs = [{
             'desc': desc,

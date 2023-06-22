@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-# Copyright (c) 2019-2021 The Bitcoin Core developers
+# Copyright (c) 2019-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test descriptor wallet function."""
 import os
-import sqlite3
+
+try:
+    import sqlite3
+except ImportError:
+    pass
 
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
@@ -27,6 +31,7 @@ class WalletDescriptorTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
         self.skip_if_no_sqlite()
+        self.skip_if_no_py_sqlite3()
 
     def run_test(self):
         if self.is_bdb_compiled():
@@ -55,43 +60,43 @@ class WalletDescriptorTest(BitcoinTestFramework):
         addr = self.nodes[0].getnewaddress("", "legacy")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('pkh(')
-        assert_equal(addr_info['hdkeypath'], 'm/44\'/1\'/0\'/0/0')
+        assert_equal(addr_info['hdkeypath'], 'm/44h/1h/0h/0/0')
 
         addr = self.nodes[0].getnewaddress("", "p2sh-segwit")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('sh(wpkh(')
-        assert_equal(addr_info['hdkeypath'], 'm/49\'/1\'/0\'/0/0')
+        assert_equal(addr_info['hdkeypath'], 'm/49h/1h/0h/0/0')
 
         addr = self.nodes[0].getnewaddress("", "bech32")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('wpkh(')
-        assert_equal(addr_info['hdkeypath'], 'm/84\'/1\'/0\'/0/0')
+        assert_equal(addr_info['hdkeypath'], 'm/84h/1h/0h/0/0')
 
         addr = self.nodes[0].getnewaddress("", "bech32m")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('tr(')
-        assert_equal(addr_info['hdkeypath'], 'm/86\'/1\'/0\'/0/0')
+        assert_equal(addr_info['hdkeypath'], 'm/86h/1h/0h/0/0')
 
         # Check that getrawchangeaddress works
         addr = self.nodes[0].getrawchangeaddress("legacy")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('pkh(')
-        assert_equal(addr_info['hdkeypath'], 'm/44\'/1\'/0\'/1/0')
+        assert_equal(addr_info['hdkeypath'], 'm/44h/1h/0h/1/0')
 
         addr = self.nodes[0].getrawchangeaddress("p2sh-segwit")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('sh(wpkh(')
-        assert_equal(addr_info['hdkeypath'], 'm/49\'/1\'/0\'/1/0')
+        assert_equal(addr_info['hdkeypath'], 'm/49h/1h/0h/1/0')
 
         addr = self.nodes[0].getrawchangeaddress("bech32")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('wpkh(')
-        assert_equal(addr_info['hdkeypath'], 'm/84\'/1\'/0\'/1/0')
+        assert_equal(addr_info['hdkeypath'], 'm/84h/1h/0h/1/0')
 
         addr = self.nodes[0].getrawchangeaddress("bech32m")
         addr_info = self.nodes[0].getaddressinfo(addr)
         assert addr_info['desc'].startswith('tr(')
-        assert_equal(addr_info['hdkeypath'], 'm/86\'/1\'/0\'/1/0')
+        assert_equal(addr_info['hdkeypath'], 'm/86h/1h/0h/1/0')
 
         # Make a wallet to receive coins at
         self.nodes[0].createwallet(wallet_name="desc2", descriptors=True)
@@ -109,7 +114,7 @@ class WalletDescriptorTest(BitcoinTestFramework):
         # Make sure things are disabled
         self.log.info("Test disabled RPCs")
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.importprivkey, "cVpF924EspNh8KjYsfhgY96mmxvT6DgdWiTYMtMjuM74hJaU5psW")
-        assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.importpubkey, send_wrpc.getaddressinfo(send_wrpc.getnewaddress()))
+        assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.importpubkey, send_wrpc.getaddressinfo(send_wrpc.getnewaddress())["pubkey"])
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.importaddress, recv_wrpc.getnewaddress())
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.importmulti, [])
         assert_raises_rpc_error(-4, "Only legacy wallets are supported by this command", recv_wrpc.rpc.addmultisigaddress, 1, [recv_wrpc.getnewaddress()])
@@ -173,14 +178,14 @@ class WalletDescriptorTest(BitcoinTestFramework):
         self.nodes[0].createwallet(wallet_name='desc_import', disable_private_keys=True, descriptors=True)
         imp_rpc = self.nodes[0].get_wallet_rpc('desc_import')
 
-        addr_types = [('legacy', False, 'pkh(', '44\'/1\'/0\'', -13),
-                      ('p2sh-segwit', False, 'sh(wpkh(', '49\'/1\'/0\'', -14),
-                      ('bech32', False, 'wpkh(', '84\'/1\'/0\'', -13),
-                      ('bech32m', False, 'tr(', '86\'/1\'/0\'', -13),
-                      ('legacy', True, 'pkh(', '44\'/1\'/0\'', -13),
-                      ('p2sh-segwit', True, 'sh(wpkh(', '49\'/1\'/0\'', -14),
-                      ('bech32', True, 'wpkh(', '84\'/1\'/0\'', -13),
-                      ('bech32m', True, 'tr(', '86\'/1\'/0\'', -13)]
+        addr_types = [('legacy', False, 'pkh(', '44h/1h/0h', -13),
+                      ('p2sh-segwit', False, 'sh(wpkh(', '49h/1h/0h', -14),
+                      ('bech32', False, 'wpkh(', '84h/1h/0h', -13),
+                      ('bech32m', False, 'tr(', '86h/1h/0h', -13),
+                      ('legacy', True, 'pkh(', '44h/1h/0h', -13),
+                      ('p2sh-segwit', True, 'sh(wpkh(', '49h/1h/0h', -14),
+                      ('bech32', True, 'wpkh(', '84h/1h/0h', -13),
+                      ('bech32m', True, 'tr(', '86h/1h/0h', -13)]
 
         for addr_type, internal, desc_prefix, deriv_path, int_idx in addr_types:
             int_str = 'internal' if internal else 'external'

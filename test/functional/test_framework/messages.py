@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2010 ArtForz -- public domain half-a-node
 # Copyright (c) 2012 Jeff Garzik
-# Copyright (c) 2010-2021 The Bitcoin Core developers
+# Copyright (c) 2010-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Bitcoin test framework primitive and message structures
@@ -93,6 +93,7 @@ def ser_compact_size(l):
         r = struct.pack("<BQ", 255, l)
     return r
 
+
 def deser_compact_size(f):
     nit = struct.unpack("<B", f.read(1))[0]
     if nit == 253:
@@ -103,35 +104,26 @@ def deser_compact_size(f):
         nit = struct.unpack("<Q", f.read(8))[0]
     return nit
 
+
 def deser_string(f):
     nit = deser_compact_size(f)
     return f.read(nit)
 
+
 def ser_string(s):
     return ser_compact_size(len(s)) + s
 
+
 def deser_uint256(f):
-    r = 0
-    for i in range(8):
-        t = struct.unpack("<I", f.read(4))[0]
-        r += t << (i * 32)
-    return r
+    return int.from_bytes(f.read(32), 'little')
 
 
 def ser_uint256(u):
-    rs = b""
-    for _ in range(8):
-        rs += struct.pack("<I", u & 0xFFFFFFFF)
-        u >>= 32
-    return rs
+    return u.to_bytes(32, 'little')
 
 
 def uint256_from_str(s):
-    r = 0
-    t = struct.unpack("<IIIIIIII", s[:32])
-    for i in range(8):
-        r += t[i] << (i * 32)
-    return r
+    return int.from_bytes(s[:32], 'little')
 
 
 def uint256_from_compact(c):

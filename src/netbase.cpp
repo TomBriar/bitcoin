@@ -1,17 +1,17 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2021 The Bitcoin Core developers
+// Copyright (c) 2009-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <netbase.h>
 
 #include <compat/compat.h>
+#include <logging.h>
 #include <sync.h>
 #include <tinyformat.h>
 #include <util/sock.h>
 #include <util/strencodings.h>
 #include <util/string.h>
-#include <util/system.h>
 #include <util/time.h>
 
 #include <atomic>
@@ -36,8 +36,8 @@ static Proxy nameProxy GUARDED_BY(g_proxyinfo_mutex);
 int nConnectTimeout = DEFAULT_CONNECT_TIMEOUT;
 bool fNameLookup = DEFAULT_NAME_LOOKUP;
 
-// Need ample time for negotiation for very slow proxies such as Tor (milliseconds)
-int g_socks5_recv_timeout = 20 * 1000;
+// Need ample time for negotiation for very slow proxies such as Tor
+std::chrono::milliseconds g_socks5_recv_timeout = 20s;
 static std::atomic<bool> interruptSocks5Recv(false);
 
 std::vector<CNetAddr> WrappedGetAddrInfo(const std::string& name, bool allow_lookup)
@@ -296,7 +296,7 @@ enum class IntrRecvError {
  *
  * @param data The buffer where the read bytes should be stored.
  * @param len The number of bytes to read into the specified buffer.
- * @param timeout The total timeout in milliseconds for this read.
+ * @param timeout The total timeout for this read.
  * @param sock The socket (has to be in non-blocking mode) from which to read bytes.
  *
  * @returns An IntrRecvError indicating the resulting status of this read.
@@ -306,10 +306,10 @@ enum class IntrRecvError {
  * @see This function can be interrupted by calling InterruptSocks5(bool).
  *      Sockets can be made non-blocking with Sock::SetNonBlocking().
  */
-static IntrRecvError InterruptibleRecv(uint8_t* data, size_t len, int timeout, const Sock& sock)
+static IntrRecvError InterruptibleRecv(uint8_t* data, size_t len, std::chrono::milliseconds timeout, const Sock& sock)
 {
-    int64_t curTime = GetTimeMillis();
-    int64_t endTime = curTime + timeout;
+    auto curTime{Now<SteadyMilliseconds>()};
+    const auto endTime{curTime + timeout};
     while (len > 0 && curTime < endTime) {
         ssize_t ret = sock.Recv(data, len, 0); // Optimistically try the recv first
         if (ret > 0) {
@@ -333,7 +333,7 @@ static IntrRecvError InterruptibleRecv(uint8_t* data, size_t len, int timeout, c
         }
         if (interruptSocks5Recv)
             return IntrRecvError::Interrupted;
-        curTime = GetTimeMillis();
+        curTime = Now<SteadyMilliseconds>();
     }
     return len == 0 ? IntrRecvError::OK : IntrRecvError::Timeout;
 }
@@ -488,7 +488,7 @@ std::unique_ptr<Sock> CreateSockTCP(const CService& address_family)
     struct sockaddr_storage sockaddr;
     socklen_t len = sizeof(sockaddr);
     if (!address_family.GetSockAddr((struct sockaddr*)&sockaddr, &len)) {
-        LogPrintf("Cannot create socket for %s: unsupported network\n", address_family.ToString());
+        LogPrintf("Cannot create socket for %s: unsupported network\n", address_family.ToStringAddrPort());
         return nullptr;
     }
 
@@ -549,11 +549,11 @@ bool ConnectSocketDirectly(const CService &addrConnect, const Sock& sock, int nT
     struct sockaddr_storage sockaddr;
     socklen_t len = sizeof(sockaddr);
     if (sock.Get() == INVALID_SOCKET) {
-        LogPrintf("Cannot connect to %s: invalid socket\n", addrConnect.ToString());
+        LogPrintf("Cannot connect to %s: invalid socket\n", addrConnect.ToStringAddrPort());
         return false;
     }
     if (!addrConnect.GetSockAddr((struct sockaddr*)&sockaddr, &len)) {
-        LogPrintf("Cannot connect to %s: unsupported network\n", addrConnect.ToString());
+        LogPrintf("Cannot connect to %s: unsupported network\n", addrConnect.ToStringAddrPort());
         return false;
     }
 
@@ -570,11 +570,11 @@ bool ConnectSocketDirectly(const CService &addrConnect, const Sock& sock, int nT
             Sock::Event occurred;
             if (!sock.Wait(std::chrono::milliseconds{nTimeout}, requested, &occurred)) {
                 LogPrintf("wait for connect to %s failed: %s\n",
-                          addrConnect.ToString(),
+                          addrConnect.ToStringAddrPort(),
                           NetworkErrorString(WSAGetLastError()));
                 return false;
             } else if (occurred == 0) {
-                LogPrint(BCLog::NET, "connection attempt to %s timed out\n", addrConnect.ToString());
+                LogPrint(BCLog::NET, "connection attempt to %s timed out\n", addrConnect.ToStringAddrPort());
                 return false;
             }
 
@@ -586,13 +586,13 @@ bool ConnectSocketDirectly(const CService &addrConnect, const Sock& sock, int nT
             socklen_t sockerr_len = sizeof(sockerr);
             if (sock.GetSockOpt(SOL_SOCKET, SO_ERROR, (sockopt_arg_type)&sockerr, &sockerr_len) ==
                 SOCKET_ERROR) {
-                LogPrintf("getsockopt() for %s failed: %s\n", addrConnect.ToString(), NetworkErrorString(WSAGetLastError()));
+                LogPrintf("getsockopt() for %s failed: %s\n", addrConnect.ToStringAddrPort(), NetworkErrorString(WSAGetLastError()));
                 return false;
             }
             if (sockerr != 0) {
                 LogConnectFailure(manual_connection,
                                   "connect() to %s failed after wait: %s",
-                                  addrConnect.ToString(),
+                                  addrConnect.ToStringAddrPort(),
                                   NetworkErrorString(sockerr));
                 return false;
             }
@@ -603,7 +603,7 @@ bool ConnectSocketDirectly(const CService &addrConnect, const Sock& sock, int nT
         else
 #endif
         {
-            LogConnectFailure(manual_connection, "connect() to %s failed: %s", addrConnect.ToString(), NetworkErrorString(WSAGetLastError()));
+            LogConnectFailure(manual_connection, "connect() to %s failed: %s", addrConnect.ToStringAddrPort(), NetworkErrorString(WSAGetLastError()));
             return false;
         }
     }

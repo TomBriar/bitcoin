@@ -9,13 +9,13 @@
 #include <chain.h>
 #include <chainparams.h>
 #include <coins.h>
+#include <common/args.h>
 #include <consensus/amount.h>
 #include <consensus/params.h>
 #include <consensus/validation.h>
 #include <core_io.h>
 #include <deploymentinfo.h>
 #include <deploymentstatus.h>
-#include <fs.h>
 #include <hash.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
@@ -25,6 +25,7 @@
 #include <net_processing.h>
 #include <node/blockstorage.h>
 #include <node/context.h>
+#include <node/transaction.h>
 #include <node/utxo_snapshot.h>
 #include <primitives/transaction.h>
 #include <rpc/server.h>
@@ -38,8 +39,8 @@
 #include <undo.h>
 #include <univalue.h>
 #include <util/check.h>
+#include <util/fs.h>
 #include <util/strencodings.h>
-#include <util/system.h>
 #include <util/translation.h>
 #include <validation.h>
 #include <validationinterface.h>
@@ -57,9 +58,7 @@ using kernel::CoinStatsHashType;
 
 using node::BlockManager;
 using node::NodeContext;
-using node::ReadBlockFromDisk;
 using node::SnapshotMetadata;
-using node::UndoReadFromDisk;
 
 struct CUpdatedBlock
 {
@@ -181,7 +180,8 @@ UniValue blockToJSON(BlockManager& blockman, const CBlock& block, const CBlockIn
         case TxVerbosity::SHOW_DETAILS:
         case TxVerbosity::SHOW_DETAILS_AND_PREVOUT:
             CBlockUndo blockUndo;
-            const bool have_undo{WITH_LOCK(::cs_main, return !blockman.IsBlockPruned(blockindex) && UndoReadFromDisk(blockUndo, blockindex))};
+            const bool is_not_pruned{WITH_LOCK(::cs_main, return !blockman.IsBlockPruned(blockindex))};
+            const bool have_undo{is_not_pruned && blockman.UndoReadFromDisk(blockUndo, *blockindex)};
 
             for (size_t i = 0; i < block.vtx.size(); ++i) {
                 const CTransactionRef& tx = block.vtx.at(i);
@@ -430,7 +430,8 @@ static RPCHelpMan getblockfrompeer()
         "We must have the header for this block, e.g. using submitheader.\n"
         "Subsequent calls for the same block and a new peer will cause the response from the previous peer to be ignored.\n"
         "Peers generally ignore requests for a stale block that they never fully verified, or one that is more than a month old.\n"
-        "When a peer does not respond with a block, we will disconnect.\n\n"
+        "When a peer does not respond with a block, we will disconnect.\n"
+        "Note: The block could be re-pruned as soon as it is received.\n\n"
         "Returns an empty JSON object if the request was successfully scheduled.",
         {
             {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The block hash to try to fetch"},
@@ -443,11 +444,6 @@ static RPCHelpMan getblockfrompeer()
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    RPCTypeCheck(request.params, {
-        UniValue::VSTR, // blockhash
-        UniValue::VNUM, // peer_id
-    });
-
     const NodeContext& node = EnsureAnyNodeContext(request.context);
     ChainstateManager& chainman = EnsureChainman(node);
     PeerManager& peerman = EnsurePeerman(node);
@@ -463,7 +459,7 @@ static RPCHelpMan getblockfrompeer()
 
     // Fetching blocks before the node has syncing past their height can prevent block files from
     // being pruned, so we avoid it if the node is in prune mode.
-    if (node::fPruneMode && index->nHeight > WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()->nHeight)) {
+    if (chainman.m_blockman.IsPruneMode() && index->nHeight > WITH_LOCK(chainman.GetMutex(), return chainman.ActiveTip()->nHeight)) {
         throw JSONRPCError(RPC_MISC_ERROR, "In prune mode, only blocks that the node has already synced previously can be fetched from a peer");
     }
 
@@ -568,7 +564,7 @@ static RPCHelpMan getblockheader()
 
     if (!fVerbose)
     {
-        CDataStream ssBlock(SER_NETWORK, PROTOCOL_VERSION);
+        DataStream ssBlock{};
         ssBlock << pblockindex->GetBlockHeader();
         std::string strHex = HexStr(ssBlock);
         return strHex;
@@ -579,37 +575,41 @@ static RPCHelpMan getblockheader()
     };
 }
 
-static CBlock GetBlockChecked(BlockManager& blockman, const CBlockIndex* pblockindex) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
+static CBlock GetBlockChecked(BlockManager& blockman, const CBlockIndex* pblockindex)
 {
-    AssertLockHeld(::cs_main);
     CBlock block;
-    if (blockman.IsBlockPruned(pblockindex)) {
-        throw JSONRPCError(RPC_MISC_ERROR, "Block not available (pruned data)");
+    {
+        LOCK(cs_main);
+        if (blockman.IsBlockPruned(pblockindex)) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Block not available (pruned data)");
+        }
     }
 
-    if (!ReadBlockFromDisk(block, pblockindex, Params().GetConsensus())) {
+    if (!blockman.ReadBlockFromDisk(block, *pblockindex)) {
         // Block not found on disk. This could be because we have the block
         // header in our index but not yet have the block or did not accept the
-        // block.
+        // block. Or if the block was pruned right after we released the lock above.
         throw JSONRPCError(RPC_MISC_ERROR, "Block not found on disk");
     }
 
     return block;
 }
 
-static CBlockUndo GetUndoChecked(BlockManager& blockman, const CBlockIndex* pblockindex) EXCLUSIVE_LOCKS_REQUIRED(cs_main)
+static CBlockUndo GetUndoChecked(BlockManager& blockman, const CBlockIndex* pblockindex)
 {
-    AssertLockHeld(::cs_main);
     CBlockUndo blockUndo;
 
     // The Genesis block does not have undo data
     if (pblockindex->nHeight == 0) return blockUndo;
 
-    if (blockman.IsBlockPruned(pblockindex)) {
-        throw JSONRPCError(RPC_MISC_ERROR, "Undo data not available (pruned data)");
+    {
+        LOCK(cs_main);
+        if (blockman.IsBlockPruned(pblockindex)) {
+            throw JSONRPCError(RPC_MISC_ERROR, "Undo data not available (pruned data)");
+        }
     }
 
-    if (!UndoReadFromDisk(blockUndo, pblockindex)) {
+    if (!blockman.UndoReadFromDisk(blockUndo, *pblockindex)) {
         throw JSONRPCError(RPC_MISC_ERROR, "Can't read undo data from disk");
     }
 
@@ -649,7 +649,8 @@ static RPCHelpMan getblock()
                 "If verbosity is 3, returns an Object with information about block <hash> and information about each transaction, including prevout information for inputs (only for unpruned blocks in the current best chain).\n",
                 {
                     {"blockhash", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The block hash"},
-                    {"verbosity|verbose", RPCArg::Type::NUM, RPCArg::Default{1}, "0 for hex-encoded data, 1 for a JSON object, 2 for JSON object with transaction data, and 3 for JSON object with transaction data including prevout information for inputs"},
+                    {"verbosity|verbose", RPCArg::Type::NUM, RPCArg::Default{1}, "0 for hex-encoded data, 1 for a JSON object, 2 for JSON object with transaction data, and 3 for JSON object with transaction data including prevout information for inputs",
+                     RPCArgOptions{.skip_type_check = true}},
                 },
                 {
                     RPCResult{"for verbosity = 0",
@@ -721,7 +722,6 @@ static RPCHelpMan getblock()
         }
     }
 
-    CBlock block;
     const CBlockIndex* pblockindex;
     const CBlockIndex* tip;
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
@@ -733,9 +733,9 @@ static RPCHelpMan getblock()
         if (!pblockindex) {
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Block not found");
         }
-
-        block = GetBlockChecked(chainman.m_blockman, pblockindex);
     }
+
+    const CBlock block{GetBlockChecked(chainman.m_blockman, pblockindex)};
 
     if (verbosity <= 0)
     {
@@ -774,10 +774,11 @@ static RPCHelpMan pruneblockchain()
                 },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    if (!node::fPruneMode)
-        throw JSONRPCError(RPC_MISC_ERROR, "Cannot prune blocks because node is not in prune mode.");
-
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
+    if (!chainman.m_blockman.IsPruneMode()) {
+        throw JSONRPCError(RPC_MISC_ERROR, "Cannot prune blocks because node is not in prune mode.");
+    }
+
     LOCK(cs_main);
     Chainstate& active_chainstate = chainman.ActiveChainstate();
     CChain& active_chain = active_chainstate.m_chain;
@@ -868,7 +869,11 @@ static RPCHelpMan gettxoutsetinfo()
                 "Note this call may take some time if you are not using coinstatsindex.\n",
                 {
                     {"hash_type", RPCArg::Type::STR, RPCArg::Default{"hash_serialized_2"}, "Which UTXO set hash should be calculated. Options: 'hash_serialized_2' (the legacy algorithm), 'muhash', 'none'."},
-                    {"hash_or_height", RPCArg::Type::NUM, RPCArg::DefaultHint{"the current best block"}, "The block hash or height of the target height (only available with coinstatsindex).", RPCArgOptions{.type_str={"", "string or numeric"}}},
+                    {"hash_or_height", RPCArg::Type::NUM, RPCArg::DefaultHint{"the current best block"}, "The block hash or height of the target height (only available with coinstatsindex).",
+                     RPCArgOptions{
+                         .skip_type_check = true,
+                         .type_str = {"", "string or numeric"},
+                     }},
                     {"use_index", RPCArg::Type::BOOL, RPCArg::Default{true}, "Use coinstatsindex, if available."},
                 },
                 RPCResult{
@@ -1104,7 +1109,7 @@ static RPCHelpMan verifychain()
                     {"nblocks", RPCArg::Type::NUM, RPCArg::DefaultHint{strprintf("%d, 0=all", DEFAULT_CHECKBLOCKS)}, "The number of blocks to check."},
                 },
                 RPCResult{
-                    RPCResult::Type::BOOL, "", "Verified or not"},
+                    RPCResult::Type::BOOL, "", "Verification finished successfully. If false, check debug.log for reason."},
                 RPCExamples{
                     HelpExampleCli("verifychain", "")
             + HelpExampleRpc("verifychain", "")
@@ -1119,7 +1124,7 @@ static RPCHelpMan verifychain()
 
     Chainstate& active_chainstate = chainman.ActiveChainstate();
     return CVerifyDB().VerifyDB(
-        active_chainstate, chainman.GetParams().GetConsensus(), active_chainstate.CoinsTip(), check_level, check_depth);
+               active_chainstate, chainman.GetParams().GetConsensus(), active_chainstate.CoinsTip(), check_level, check_depth) == VerifyDBResult::SUCCESS;
 },
     };
 }
@@ -1242,7 +1247,6 @@ RPCHelpMan getblockchaininfo()
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    const ArgsManager& args{EnsureAnyArgsman(request.context)};
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
     LOCK(cs_main);
     Chainstate& active_chainstate = chainman.ActiveChainstate();
@@ -1250,7 +1254,7 @@ RPCHelpMan getblockchaininfo()
     const CBlockIndex& tip{*CHECK_NONFATAL(active_chainstate.m_chain.Tip())};
     const int height{tip.nHeight};
     UniValue obj(UniValue::VOBJ);
-    obj.pushKV("chain", chainman.GetParams().NetworkIDString());
+    obj.pushKV("chain", chainman.GetParams().GetChainTypeString());
     obj.pushKV("blocks", height);
     obj.pushKV("headers", chainman.m_best_header ? chainman.m_best_header->nHeight : -1);
     obj.pushKV("bestblockhash", tip.GetBlockHash().GetHex());
@@ -1261,15 +1265,14 @@ RPCHelpMan getblockchaininfo()
     obj.pushKV("initialblockdownload", active_chainstate.IsInitialBlockDownload());
     obj.pushKV("chainwork", tip.nChainWork.GetHex());
     obj.pushKV("size_on_disk", chainman.m_blockman.CalculateCurrentUsage());
-    obj.pushKV("pruned", node::fPruneMode);
-    if (node::fPruneMode) {
+    obj.pushKV("pruned", chainman.m_blockman.IsPruneMode());
+    if (chainman.m_blockman.IsPruneMode()) {
         obj.pushKV("pruneheight", chainman.m_blockman.GetFirstStoredBlock(tip)->nHeight);
 
-        // if 0, execution bypasses the whole if block.
-        bool automatic_pruning{args.GetIntArg("-prune", 0) != 1};
+        const bool automatic_pruning{chainman.m_blockman.GetPruneTarget() != BlockManager::PRUNE_TARGET_MANUAL};
         obj.pushKV("automatic_pruning",  automatic_pruning);
         if (automatic_pruning) {
-            obj.pushKV("prune_target_size",  node::nPruneTarget);
+            obj.pushKV("prune_target_size", chainman.m_blockman.GetPruneTarget());
         }
     }
 
@@ -1738,7 +1741,11 @@ static RPCHelpMan getblockstats()
                 "\nCompute per block statistics for a given window. All amounts are in satoshis.\n"
                 "It won't work for some heights with pruning.\n",
                 {
-                    {"hash_or_height", RPCArg::Type::NUM, RPCArg::Optional::NO, "The block hash or height of the target block", RPCArgOptions{.type_str={"", "string or numeric"}}},
+                    {"hash_or_height", RPCArg::Type::NUM, RPCArg::Optional::NO, "The block hash or height of the target block",
+                     RPCArgOptions{
+                         .skip_type_check = true,
+                         .type_str = {"", "string or numeric"},
+                     }},
                     {"stats", RPCArg::Type::ARR, RPCArg::DefaultHint{"all values"}, "Values to plot (see result below)",
                         {
                             {"height", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Selected statistic"},
@@ -1797,7 +1804,6 @@ static RPCHelpMan getblockstats()
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
     ChainstateManager& chainman = EnsureAnyChainman(request.context);
-    LOCK(cs_main);
     const CBlockIndex& pindex{*CHECK_NONFATAL(ParseHashOrHeight(request.params[0], chainman))};
 
     std::set<std::string> stats;
@@ -2097,6 +2103,10 @@ static RPCHelpMan scantxoutset()
         "    combo(<pubkey>)                      P2PK, P2PKH, P2WPKH, and P2SH-P2WPKH outputs for the given pubkey\n"
         "    pkh(<pubkey>)                        P2PKH outputs for the given pubkey\n"
         "    sh(multi(<n>,<pubkey>,<pubkey>,...)) P2SH-multisig outputs for the given threshold and pubkeys\n"
+        "    tr(<pubkey>)                         P2TR\n"
+        "    tr(<pubkey>,{pk(<pubkey>)})          P2TR with single fallback pubkey in tapscript\n"
+        "    rawtr(<pubkey>)                      P2TR with the specified key as output key rather than inner\n"
+        "    wsh(and_v(v:pk(<pubkey>),after(2)))  P2WSH miniscript with mandatory pubkey and a timelock\n"
         "\nIn the above, <pubkey> either refers to a fixed public key in hexadecimal notation, or to an xpub/xprv optionally followed by one\n"
         "or more path elements separated by \"/\", and optionally ending in \"/*\" (unhardened), or \"/*'\" or \"/*h\" (hardened) to specify all\n"
         "unhardened or hardened child keys.\n"
@@ -2141,8 +2151,6 @@ static RPCHelpMan scantxoutset()
         },
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
 {
-    RPCTypeCheck(request.params, {UniValue::VSTR, UniValue::VARR});
-
     UniValue result(UniValue::VOBJ);
     if (request.params[0].get_str() == "status") {
         CoinsViewScanReserver reserver;
@@ -2265,17 +2273,47 @@ public:
     }
 };
 
+static bool CheckBlockFilterMatches(BlockManager& blockman, const CBlockIndex& blockindex, const GCSFilter::ElementSet& needles)
+{
+    const CBlock block{GetBlockChecked(blockman, &blockindex)};
+    const CBlockUndo block_undo{GetUndoChecked(blockman, &blockindex)};
+
+    // Check if any of the outputs match the scriptPubKey
+    for (const auto& tx : block.vtx) {
+        if (std::any_of(tx->vout.cbegin(), tx->vout.cend(), [&](const auto& txout) {
+                return needles.count(std::vector<unsigned char>(txout.scriptPubKey.begin(), txout.scriptPubKey.end())) != 0;
+            })) {
+            return true;
+        }
+    }
+    // Check if any of the inputs match the scriptPubKey
+    for (const auto& txundo : block_undo.vtxundo) {
+        if (std::any_of(txundo.vprevout.cbegin(), txundo.vprevout.cend(), [&](const auto& coin) {
+                return needles.count(std::vector<unsigned char>(coin.out.scriptPubKey.begin(), coin.out.scriptPubKey.end())) != 0;
+            })) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 static RPCHelpMan scanblocks()
 {
     return RPCHelpMan{"scanblocks",
-        "\nReturn relevant blockhashes for given descriptors.\n"
+        "\nReturn relevant blockhashes for given descriptors (requires blockfilterindex).\n"
         "This call may take several minutes. Make sure to use no RPC timeout (bitcoin-cli -rpcclienttimeout=0)",
         {
             scan_action_arg_desc,
             scan_objects_arg_desc,
             RPCArg{"start_height", RPCArg::Type::NUM, RPCArg::Default{0}, "Height to start to scan from"},
             RPCArg{"stop_height", RPCArg::Type::NUM, RPCArg::DefaultHint{"chain tip"}, "Height to stop to scan"},
-            RPCArg{"filtertype", RPCArg::Type::STR, RPCArg::Default{BlockFilterTypeName(BlockFilterType::BASIC)}, "The type name of the filter"}
+            RPCArg{"filtertype", RPCArg::Type::STR, RPCArg::Default{BlockFilterTypeName(BlockFilterType::BASIC)}, "The type name of the filter"},
+            RPCArg{"options", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "",
+                {
+                    {"filter_false_positives", RPCArg::Type::BOOL, RPCArg::Default{false}, "Filter false positives (slower and may fail on pruned nodes). Otherwise they may occur at a rate of 1/M"},
+                },
+                RPCArgOptions{.oneline_description="\"options\""}},
         },
         {
             scan_result_status_none,
@@ -2285,6 +2323,7 @@ static RPCHelpMan scanblocks()
                 {RPCResult::Type::ARR, "relevant_blocks", "Blocks that may have matched a scanobject.", {
                     {RPCResult::Type::STR_HEX, "blockhash", "A relevant blockhash"},
                 }},
+                {RPCResult::Type::BOOL, "completed", "true if the scan process was not aborted"}
             }},
             RPCResult{"when action=='status' and a scan is currently in progress", RPCResult::Type::OBJ, "", "", {
                     {RPCResult::Type::NUM, "progress", "Approximate percent complete"},
@@ -2322,8 +2361,7 @@ static RPCHelpMan scanblocks()
         // set the abort flag
         g_scanfilter_should_abort_scan = true;
         return true;
-    }
-    else if (request.params[0].get_str() == "start") {
+    } else if (request.params[0].get_str() == "start") {
         BlockFiltersScanReserver reserver;
         if (!reserver.reserve()) {
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Scan already in progress, use action \"abort\" or \"status\"");
@@ -2335,6 +2373,9 @@ static RPCHelpMan scanblocks()
             throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Unknown filtertype");
         }
 
+        UniValue options{request.params[5].isNull() ? UniValue::VOBJ : request.params[5]};
+        bool filter_false_positives{options.exists("filter_false_positives") ? options["filter_false_positives"].get_bool() : false};
+
         BlockFilterIndex* index = GetBlockFilterIndex(filtertype);
         if (!index) {
             throw JSONRPCError(RPC_MISC_ERROR, "Index is not enabled for filtertype " + filtertype_name);
@@ -2344,27 +2385,28 @@ static RPCHelpMan scanblocks()
         ChainstateManager& chainman = EnsureChainman(node);
 
         // set the start-height
-        const CBlockIndex* block = nullptr;
+        const CBlockIndex* start_index = nullptr;
         const CBlockIndex* stop_block = nullptr;
         {
             LOCK(cs_main);
             CChain& active_chain = chainman.ActiveChain();
-            block = active_chain.Genesis();
-            stop_block = active_chain.Tip();
+            start_index = active_chain.Genesis();
+            stop_block = active_chain.Tip(); // If no stop block is provided, stop at the chain tip.
             if (!request.params[2].isNull()) {
-                block = active_chain[request.params[2].getInt<int>()];
-                if (!block) {
+                start_index = active_chain[request.params[2].getInt<int>()];
+                if (!start_index) {
                     throw JSONRPCError(RPC_MISC_ERROR, "Invalid start_height");
                 }
             }
             if (!request.params[3].isNull()) {
                 stop_block = active_chain[request.params[3].getInt<int>()];
-                if (!stop_block || stop_block->nHeight < block->nHeight) {
+                if (!stop_block || stop_block->nHeight < start_index->nHeight) {
                     throw JSONRPCError(RPC_MISC_ERROR, "Invalid stop_height");
                 }
             }
         }
-        CHECK_NONFATAL(block);
+        CHECK_NONFATAL(start_index);
+        CHECK_NONFATAL(stop_block);
 
         // loop through the scan objects, add scripts to the needle_set
         GCSFilter::ElementSet needle_set;
@@ -2377,55 +2419,64 @@ static RPCHelpMan scanblocks()
         }
         UniValue blocks(UniValue::VARR);
         const int amount_per_chunk = 10000;
-        const CBlockIndex* start_index = block; // for remembering the start of a blockfilter range
         std::vector<BlockFilter> filters;
-        const CBlockIndex* start_block = block; // for progress reporting
-        const int total_blocks_to_process = stop_block->nHeight - start_block->nHeight;
+        int start_block_height = start_index->nHeight; // for progress reporting
+        const int total_blocks_to_process = stop_block->nHeight - start_block_height;
 
         g_scanfilter_should_abort_scan = false;
         g_scanfilter_progress = 0;
-        g_scanfilter_progress_height = start_block->nHeight;
+        g_scanfilter_progress_height = start_block_height;
+        bool completed = true;
 
-        while (block) {
+        const CBlockIndex* end_range = nullptr;
+        do {
             node.rpc_interruption_point(); // allow a clean shutdown
             if (g_scanfilter_should_abort_scan) {
-                LogPrintf("scanblocks RPC aborted at height %d.\n", block->nHeight);
+                completed = false;
                 break;
             }
-            const CBlockIndex* next = nullptr;
-            {
-                LOCK(cs_main);
-                CChain& active_chain = chainman.ActiveChain();
-                next = active_chain.Next(block);
-                if (block == stop_block) next = nullptr;
-            }
-            if (start_index->nHeight + amount_per_chunk == block->nHeight || next == nullptr) {
-                LogPrint(BCLog::RPC, "Fetching blockfilters from height %d to height %d.\n", start_index->nHeight, block->nHeight);
-                if (index->LookupFilterRange(start_index->nHeight, block, filters)) {
-                    for (const BlockFilter& filter : filters) {
-                        // compare the elements-set with each filter
-                        if (filter.GetFilter().MatchAny(needle_set)) {
-                            blocks.push_back(filter.GetBlockHash().GetHex());
-                            LogPrint(BCLog::RPC, "scanblocks: found match in %s\n", filter.GetBlockHash().GetHex());
+
+            // split the lookup range in chunks if we are deeper than 'amount_per_chunk' blocks from the stopping block
+            int start_block = !end_range ? start_index->nHeight : start_index->nHeight + 1; // to not include the previous round 'end_range' block
+            end_range = (start_block + amount_per_chunk < stop_block->nHeight) ?
+                    WITH_LOCK(::cs_main, return chainman.ActiveChain()[start_block + amount_per_chunk]) :
+                    stop_block;
+
+            if (index->LookupFilterRange(start_block, end_range, filters)) {
+                for (const BlockFilter& filter : filters) {
+                    // compare the elements-set with each filter
+                    if (filter.GetFilter().MatchAny(needle_set)) {
+                        if (filter_false_positives) {
+                            // Double check the filter matches by scanning the block
+                            const CBlockIndex& blockindex = *CHECK_NONFATAL(WITH_LOCK(cs_main, return chainman.m_blockman.LookupBlockIndex(filter.GetBlockHash())));
+
+                            if (!CheckBlockFilterMatches(chainman.m_blockman, blockindex, needle_set)) {
+                                continue;
+                            }
                         }
+
+                        blocks.push_back(filter.GetBlockHash().GetHex());
                     }
                 }
-                start_index = block;
-
-                // update progress
-                int blocks_processed = block->nHeight - start_block->nHeight;
-                if (total_blocks_to_process > 0) { // avoid division by zero
-                    g_scanfilter_progress = (int)(100.0 / total_blocks_to_process * blocks_processed);
-                } else {
-                    g_scanfilter_progress = 100;
-                }
-                g_scanfilter_progress_height = block->nHeight;
             }
-            block = next;
-        }
-        ret.pushKV("from_height", start_block->nHeight);
-        ret.pushKV("to_height", g_scanfilter_progress_height.load());
+            start_index = end_range;
+
+            // update progress
+            int blocks_processed = end_range->nHeight - start_block_height;
+            if (total_blocks_to_process > 0) { // avoid division by zero
+                g_scanfilter_progress = (int)(100.0 / total_blocks_to_process * blocks_processed);
+            } else {
+                g_scanfilter_progress = 100;
+            }
+            g_scanfilter_progress_height = end_range->nHeight;
+
+        // Finish if we reached the stop block
+        } while (start_index != stop_block);
+
+        ret.pushKV("from_height", start_block_height);
+        ret.pushKV("to_height", start_index->nHeight); // start_index is always the last scanned block here
         ret.pushKV("relevant_blocks", blocks);
+        ret.pushKV("completed", completed);
     }
     else {
         throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Invalid action '%s'", request.params[0].get_str()));

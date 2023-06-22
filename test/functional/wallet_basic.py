@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2014-2021 The Bitcoin Core developers
+# Copyright (c) 2014-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
 """Test the wallet."""
@@ -266,6 +266,20 @@ class WalletTest(BitcoinTestFramework):
         node_2_bal -= Decimal('10')
         assert_equal(self.nodes[2].getbalance(), node_2_bal)
         node_0_bal = self.check_fee_amount(self.nodes[0].getbalance(), node_0_bal + Decimal('10'), fee_per_byte, self.get_vsize(self.nodes[2].gettransaction(txid)['hex']))
+
+        # Sendmany 5 BTC to two addresses with subtracting fee from both addresses
+        a0 = self.nodes[0].getnewaddress()
+        a1 = self.nodes[0].getnewaddress()
+        txid = self.nodes[2].sendmany(dummy='', amounts={a0: 5, a1: 5}, subtractfeefrom=[a0, a1])
+        self.generate(self.nodes[2], 1, sync_fun=lambda: self.sync_all(self.nodes[0:3]))
+        node_2_bal -= Decimal('10')
+        assert_equal(self.nodes[2].getbalance(), node_2_bal)
+        tx = self.nodes[2].gettransaction(txid)
+        node_0_bal = self.check_fee_amount(self.nodes[0].getbalance(), node_0_bal + Decimal('10'), fee_per_byte, self.get_vsize(tx['hex']))
+        assert_equal(self.nodes[0].getbalance(), node_0_bal)
+        expected_bal = Decimal('5') + (tx['fee'] / 2)
+        assert_equal(self.nodes[0].getreceivedbyaddress(a0), expected_bal)
+        assert_equal(self.nodes[0].getreceivedbyaddress(a1), expected_bal)
 
         self.log.info("Test sendmany with fee_rate param (explicit fee rate in sat/vB)")
         fee_rate_sat_vb = 2
@@ -632,7 +646,7 @@ class WalletTest(BitcoinTestFramework):
         assert_equal(total_txs, len(self.nodes[0].listtransactions("*", 99999)))
 
         # Test getaddressinfo on external address. Note that these addresses are taken from disablewallet.py
-        assert_raises_rpc_error(-5, "Invalid prefix for Base58-encoded address", self.nodes[0].getaddressinfo, "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")
+        assert_raises_rpc_error(-5, "Invalid or unsupported Base58-encoded address.", self.nodes[0].getaddressinfo, "3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy")
         address_info = self.nodes[0].getaddressinfo("mneYUmWYsuk7kySiURxCi3AGxrAqZxLgPZ")
         assert_equal(address_info['address'], "mneYUmWYsuk7kySiURxCi3AGxrAqZxLgPZ")
         assert_equal(address_info["scriptPubKey"], "76a9144e3854046c7bd1594ac904e4793b6a45b36dea0988ac")
@@ -666,7 +680,7 @@ class WalletTest(BitcoinTestFramework):
                                  "category": baz["category"],
                                  "vout":     baz["vout"]}
         expected_fields = frozenset({'amount', 'bip125-replaceable', 'confirmations', 'details', 'fee',
-                                     'hex', 'time', 'timereceived', 'trusted', 'txid', 'wtxid', 'walletconflicts'})
+                                     'hex', 'lastprocessedblock', 'time', 'timereceived', 'trusted', 'txid', 'wtxid', 'walletconflicts'})
         verbose_field = "decoded"
         expected_verbose_fields = expected_fields | {verbose_field}
 
@@ -730,6 +744,45 @@ class WalletTest(BitcoinTestFramework):
             coin_b = next(c for c in coins if c["txid"] == txid_b)
             assert_equal(coin_b["parent_descs"][0], multi_b)
             self.nodes[0].unloadwallet("wo")
+
+        self.log.info("Test -spendzeroconfchange")
+        self.restart_node(0, ["-spendzeroconfchange=0"])
+
+        # create new wallet and fund it with a confirmed UTXO
+        self.nodes[0].createwallet(wallet_name="zeroconf", load_on_startup=True)
+        zeroconf_wallet = self.nodes[0].get_wallet_rpc("zeroconf")
+        default_wallet = self.nodes[0].get_wallet_rpc(self.default_wallet_name)
+        default_wallet.sendtoaddress(zeroconf_wallet.getnewaddress(), Decimal('1.0'))
+        self.generate(self.nodes[0], 1, sync_fun=self.no_op)
+        utxos = zeroconf_wallet.listunspent(minconf=0)
+        assert_equal(len(utxos), 1)
+        assert_equal(utxos[0]['confirmations'], 1)
+
+        # spend confirmed UTXO to ourselves
+        zeroconf_wallet.sendall(recipients=[zeroconf_wallet.getnewaddress()])
+        utxos = zeroconf_wallet.listunspent(minconf=0)
+        assert_equal(len(utxos), 1)
+        assert_equal(utxos[0]['confirmations'], 0)
+        # accounts for untrusted pending balance
+        bal = zeroconf_wallet.getbalances()
+        assert_equal(bal['mine']['trusted'], 0)
+        assert_equal(bal['mine']['untrusted_pending'], utxos[0]['amount'])
+
+        # spending an unconfirmed UTXO sent to ourselves should fail
+        assert_raises_rpc_error(-6, "Insufficient funds", zeroconf_wallet.sendtoaddress, zeroconf_wallet.getnewaddress(), Decimal('0.5'))
+
+        # check that it works again with -spendzeroconfchange set (=default)
+        self.restart_node(0, ["-spendzeroconfchange=1"])
+        zeroconf_wallet = self.nodes[0].get_wallet_rpc("zeroconf")
+        utxos = zeroconf_wallet.listunspent(minconf=0)
+        assert_equal(len(utxos), 1)
+        assert_equal(utxos[0]['confirmations'], 0)
+        # accounts for trusted balance
+        bal = zeroconf_wallet.getbalances()
+        assert_equal(bal['mine']['trusted'], utxos[0]['amount'])
+        assert_equal(bal['mine']['untrusted_pending'], 0)
+
+        zeroconf_wallet.sendtoaddress(zeroconf_wallet.getnewaddress(), Decimal('0.5'))
 
 
 if __name__ == '__main__':

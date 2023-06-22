@@ -64,7 +64,6 @@
 using node::BlockManager;
 using node::BlockAssembler;
 using node::CBlockTemplate;
-using node::ReadBlockFromDisk;
 using node::GetTransaction;
 using node::RegenerateCommitments;
 using node::FindCoins;
@@ -85,7 +84,7 @@ namespace {
 			}
 	};
 	struct CompressionRoundtripFuzzTestingSetup : public TestChain100Setup {
-		CompressionRoundtripFuzzTestingSetup(const std::string& chain_name, const std::vector<const char*>& extra_args) : TestChain100Setup{chain_name, extra_args} 
+		CompressionRoundtripFuzzTestingSetup(const ChainType& chain_type, const std::vector<const char*>& extra_args) : TestChain100Setup{chain_type, extra_args} 
 		{}
 
 		CCompressedTxId GetCompressedTxId(uint256 txid, CBlock block) {
@@ -278,7 +277,7 @@ namespace {
 
 void compression_roundtrip_initialize()
 {
-    SelectParams(CBaseChainParams::REGTEST);
+    SelectParams(ChainType::REGTEST);
 	rpc = InitializeCompressionRoundtripFuzzTestingSetup();
 	ctx = secp_context.GetContext();
 	assert(rpc->InitTXIndex());

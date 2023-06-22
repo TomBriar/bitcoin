@@ -1,5 +1,5 @@
 // Copyright (c) 2010 Satoshi Nakamoto
-// Copyright (c) 2009-2021 The Bitcoin Core developers
+// Copyright (c) 2009-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
@@ -32,18 +32,12 @@
 #include <chain.h>
 #include <logging.h>
 #include <validation.h>
-
 #include <script/sign.h>
-// #include <node/transaction.h>
-// #include <node/transaction.cpp>
 #include <node/blockstorage.h>
-
 #include <secp256k1.h>
 #include <secp256k1_recovery.h>
 #include <secp256k1_schnorrsig.h>
 #include <secp256k1_extrakeys.h>
-
-
 #include <base58.h>
 #include <chain.h>
 #include <coins.h>
@@ -81,35 +75,18 @@
 #include <util/vector.h>
 #include <validation.h>
 #include <validationinterface.h>
-
 #include <numeric>
 #include <stdint.h>
 #include <univalue.h>
 
 
-CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf)
+void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optional<bool> rbf)
 {
-    if (outputs_in.isNull()) {
-        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, output argument must be non-null");
-    }
-
     UniValue inputs;
     if (inputs_in.isNull()) {
         inputs = UniValue::VARR;
     } else {
         inputs = inputs_in.get_array();
-    }
-
-    const bool outputs_is_obj = outputs_in.isObject();
-    UniValue outputs = outputs_is_obj ? outputs_in.get_obj() : outputs_in.get_array();
-
-    CMutableTransaction rawTx;
-
-    if (!locktime.isNull()) {
-        int64_t nLockTime = locktime.getInt<int64_t>();
-        if (nLockTime < 0 || nLockTime > LOCKTIME_MAX)
-            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, locktime out of range");
-        rawTx.nLockTime = nLockTime;
     }
 
     for (unsigned int idx = 0; idx < inputs.size(); idx++) {
@@ -118,7 +95,7 @@ CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniVal
 
         uint256 txid = ParseHashO(o, "txid");
 
-        const UniValue& vout_v = find_value(o, "vout");
+        const UniValue& vout_v = o.find_value("vout");
         if (!vout_v.isNum())
             throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, missing vout key");
         int nOutput = vout_v.getInt<int>();
@@ -136,7 +113,7 @@ CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniVal
         }
 
         // set the sequence number if passed in the parameters object
-        const UniValue& sequenceObj = find_value(o, "sequence");
+        const UniValue& sequenceObj = o.find_value("sequence");
         if (sequenceObj.isNum()) {
             int64_t seqNr64 = sequenceObj.getInt<int64_t>();
             if (seqNr64 < 0 || seqNr64 > CTxIn::SEQUENCE_FINAL) {
@@ -150,6 +127,16 @@ CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniVal
 
         rawTx.vin.push_back(in);
     }
+}
+
+void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in)
+{
+    if (outputs_in.isNull()) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, output argument must be non-null");
+    }
+
+    const bool outputs_is_obj = outputs_in.isObject();
+    UniValue outputs = outputs_is_obj ? outputs_in.get_obj() : outputs_in.get_array();
 
     if (!outputs_is_obj) {
         // Translate array of key-value pairs into dict
@@ -198,6 +185,21 @@ CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniVal
             rawTx.vout.push_back(out);
         }
     }
+}
+
+CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf)
+{
+    CMutableTransaction rawTx;
+
+    if (!locktime.isNull()) {
+        int64_t nLockTime = locktime.getInt<int64_t>();
+        if (nLockTime < 0 || nLockTime > LOCKTIME_MAX)
+            throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter, locktime out of range");
+        rawTx.nLockTime = nLockTime;
+    }
+
+    AddInputs(rawTx, inputs_in, rbf);
+    AddOutputs(rawTx, outputs_in);
 
     if (rbf.has_value() && rbf.value() && rawTx.vin.size() > 0 && !SignalsOptInRBF(CTransaction(rawTx))) {
         throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid parameter combination: Sequence number(s) contradict replaceable option");
@@ -244,7 +246,7 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
 
             uint256 txid = ParseHashO(prevOut, "txid");
 
-            int nOut = find_value(prevOut, "vout").getInt<int>();
+            int nOut = prevOut.find_value("vout").getInt<int>();
             if (nOut < 0) {
                 throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "vout cannot be negative");
             }
@@ -265,7 +267,7 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
                 newcoin.out.scriptPubKey = scriptPubKey;
                 newcoin.out.nValue = MAX_MONEY;
                 if (prevOut.exists("amount")) {
-                    newcoin.out.nValue = AmountFromValue(find_value(prevOut, "amount"));
+                    newcoin.out.nValue = AmountFromValue(prevOut.find_value("amount"));
                 }
                 newcoin.nHeight = 1;
                 coins[out] = std::move(newcoin);
@@ -280,8 +282,8 @@ void ParsePrevouts(const UniValue& prevTxsUnival, FillableSigningProvider* keyst
                         {"redeemScript", UniValueType(UniValue::VSTR)},
                         {"witnessScript", UniValueType(UniValue::VSTR)},
                     }, true);
-                UniValue rs = find_value(prevOut, "redeemScript");
-                UniValue ws = find_value(prevOut, "witnessScript");
+                const UniValue& rs{prevOut.find_value("redeemScript")};
+                const UniValue& ws{prevOut.find_value("witnessScript")};
                 if (rs.isNull() && ws.isNull()) {
                     throw JSONRPCError(RPC_INVALID_PARAMETER, "Missing redeemScript/witnessScript");
                 }
@@ -377,281 +379,3 @@ void SignTransactionResultToJSON(CMutableTransaction& mtx, bool complete, const 
         result.pushKV("errors", vErrors);
     }
 }
-
-////int binary_to_int(std::string binary)
-////{
-////	std::cout << "bintest: " << binary.size() << " >= " << floor(log2(INT_MAX))+1 << std::endl;
-////	if (binary.size() >= floor(log2(INT_MAX))+1) {
-////		throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Binary String Interpretation larger then MAX_INT");
-////	}
-////	int i_byte = 0;
-////	int length = binary.length();
-////	for (int x = 0; x < length; x++) {
-////		if (binary.substr(x, 1) == "1") {
-////			i_byte += pow(2, ((length-1)-x));
-////		} 
-////	}
-////	return i_byte;
-////}
-
-////std::string binary_to_hex(std::string binary)
-////{
-////	std::string hex, temphex;
-////	int byte, length;
-
-////	length = binary.length();
-////	assert(length%8 == 0);
-////	for (int i = 0; i < (length / 8); i++) {
-////		byte = binary_to_int(binary.substr(i*8, 8));
-////		std::stringstream stream;
-////		stream << std::hex << byte;
-////		temphex = stream.str();
-////		if (temphex.length() == 1) {
-////			temphex = "0"+temphex;
-////		} 
-////		hex += temphex;
-////	}
-////	return hex;
-////}
-
-////std::string int_to_hex(int64_t byte)
-////{
-////	std::string hex;
-////	std::stringstream stream;
-////	stream << std::hex << byte;
-////	hex = stream.str();
-////	if (hex.length() % 2 == 1) {
-////		hex = "0"+hex;
-////	}
-////	return hex;
-////}
-
-////int get_first_push_bytes(std::vector<unsigned char>& data, CScript script) 
-////{
-////	opcodetype opcodeRet;
-
-////	data.clear();
-////	CScriptBase::const_iterator pc = script.begin();
-
-////	while (pc < script.end()) 
-////	{   
-////		script.GetOp(pc, opcodeRet, data);
-////		if (data.size() > 0) {
-////			return 1;
-////		} 
-////	}
-////	return 0;
-////}
-
-////static int compress_signature(secp256k1_context* ctx, std::vector<unsigned char>& vchRet)
-////{
-////	std::cout << "sig to compress = " << HexStr(vchRet) << std::endl;
-//////TODO: if (!vchRet) return 0;
-////	
-////	unsigned char hash_type = vchRet.back();
-////	int length = vchRet.size()-1;
-////	secp256k1_ecdsa_signature sig;
-////	int r = secp256k1_ecdsa_signature_parse_der(ctx, &sig, &vchRet[0], length);
-////	if (r) {
-////		int r = secp256k1_ecdsa_signature_serialize_compact(ctx, &vchRet[0], &sig);
-////		if (r) {
-////			vchRet[64] = hash_type;
-////			vchRet.resize(65);
-////			return 1;
-////		}
-////	}
-////	return 0;
-////}
-
-////bool get_input_type(secp256k1_context* ctx, CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet)
-////{
-////	CScript scriptPubKey = (*tx).vout.at(input.prevout.n).scriptPubKey;
-////	
-////	/* P2SH and P2WSH are uncompressable */
-////	if (scriptPubKey.IsPayToScriptHash() || scriptPubKey.IsPayToWitnessScriptHash()) {
-////		std::cout << "get_input_type = P2SH|P2PWSH" << std::endl;
-////		return false;
-////	}
-
-////	if (scriptPubKey.IsPayToPublicKeyHash()) {
-////		std::cout << "get_input_type = Legacy" << std::endl;
-////		std::cout << "input.scriptSig = " << HexStr(input.scriptSig) << std::endl;
-////		assert(get_first_push_bytes(vchRet, input.scriptSig));
-////		int r =	compress_signature(ctx, vchRet);
-////		if (!r) return false;
-////		return true;
-////	}
-
-////	if (scriptPubKey.IsPayToWitnessPublicKeyHash()) {
-////		std::cout << "get_input_type = Segwit" << std::endl;
-////		vchRet = input.scriptWitness.stack.at(0);
-////		int r =	compress_signature(ctx, vchRet);
-////		if (!r) return false;
-////		return true;
-////	}
-
-////	if (scriptPubKey.IsPayToTaproot()) {
-////		std::cout << "get_input_type = TAPROOT" << std::endl;
-////		vchRet = input.scriptWitness.stack.at(0);
-////		return true;
-////	}
-////	
-////	std::cout << "get_input_type = Custom Script, fall through" << std::endl;
-////	return false;
-////}
-
-
-////OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet)
-////{
-////	get_first_push_bytes(vchRet, script_pubkey);
-
-////	if (script_pubkey.IsPayToPublicKey()) {
-////		return P2PK;
-////	}
-////	if (script_pubkey.IsPayToScriptHash()) {
-////		return P2SH;
-////	}
-////	if (script_pubkey.IsPayToPublicKeyHash()) {
-////		return P2PKH;
-////	}
-////	if (script_pubkey.IsPayToWitnessPublicKeyHash()) {
-////		return P2WPKH;
-////	}
-////	if (script_pubkey.IsPayToWitnessScriptHash()) {
-////		return P2WSH;
-////	}
-////	if (script_pubkey.IsPayToTaproot()) {
-////		return P2TR;
-////	}
-////	return CustomOutput;
-////}
-
-////std::vector<unsigned char> hex_to_bytes(std::string hex) {
-////	int index, length;
-////	unsigned char byte;
-////	std::vector<unsigned char> r;
-////	length = hex.length() / 2;
-////	for (index = 0; index < length; index++) {
-////		byte = std::stoul(hex.substr(index*2, 2), nullptr, 16);
-////		r.push_back(byte);
-////	}
-////	return r;
-////}
-
-
-
-////std::string hex_to_binary(std::string hex)
-////{
-////	std::vector<unsigned char> r;
-////	assert(hex.length() == 2);
-////	int byte = std::stoul(hex, nullptr, 16);
-////	r.push_back(byte);
-////	return std::bitset<8>(byte).to_string();
-////}
-
-////std::vector<unsigned char> to_varint(uint64_t value)
-////{
-////	CDataStream varint_ss(SER_DISK, 0);
-////	varint_ss << VARINT(value);
-////	std::vector<std::byte> varint(varint_ss.size());
-////	varint_ss.read(varint);
-////	std::vector<unsigned char> uc_varint = reinterpret_cast<std::vector<unsigned char> &&> (varint);
-////	return uc_varint;
-////			
-////////std::vector<unsigned char> result;
-////////int index = 0;
-////////std::string binary = std::bitset<64>(intager).to_string();
-////////binary.erase(0, binary.find_first_not_of('0'));
-////////if (binary.length() == 0) {
-////////	result.push_back(0x00);
-////////    return result;
-////////}
-////////float fint = binary.length();
-////////fint /= 7;
-////////int varlen = ceil(fint);
-////////int padding = (7*varlen)-binary.length();
-////////if (varlen > 1) {
-////////	unsigned char byte = 0x80;
-////////	byte |=	binary_to_int(binary.substr(0, (7-padding)));
-////////	result.push_back(byte);
-
-////////    index += 7-padding;
-////////    for (int i = 1; i < varlen; i++) {
-////////		byte = 0;
-////////        if (i+1 != varlen) {
-////////			byte |= 0x80;
-////////		}
-////////        byte |= binary_to_int(binary.substr(index, 7));
-////////		result.push_back(byte);
-////////        index += 7;
-////////    }
-////////} else {
-////////    unsigned char byte = 0;
-////////    byte |=	binary_to_int(binary);
-////////	result.push_back(byte);
-////////}
-////////return result;
-////}
-
-////void checkSize(int size, int index) {
-////	if (size < index || index < 0) {
-////		throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Compressed TX malformed or truncated");
-////	}
-////}
-
-////uint64_t from_varint(std::vector<unsigned char>& transaction_bytes, int& index) 
-////{
-////	std::vector<unsigned char> uc_varint = std::vector<unsigned char>(transaction_bytes.begin()+index, transaction_bytes.end());
-////	std::vector<std::byte> b_varint = reinterpret_cast<std::vector<std::byte> &&> (uc_varint);
-////	int old_size = b_varint.size();
-
-////	CDataStream varint_ss(SER_DISK, 0);
-////	varint_ss.write(b_varint);
-////	uint64_t value = std::numeric_limits<uint64_t>::max();
-////	varint_ss >> VARINT(value);
-////	
-////	std::vector<std::byte> varint(varint_ss.size());
-////	varint_ss.read(varint);
-////	std::cout << "varint: ";
-////	for (size_t i = 0; i < (old_size - varint.size()); i++) {
-////	std::cout << int_to_hex(transaction_bytes.at(index+i));
-////	}
-////	std::cout << std::endl;
-////	index += old_size - varint.size();
-////	return value;
-	
-////std::string r;
-////bool end = false;
-////std::cout << "varint = " << std::endl;
-////for (; ;) {
-////	checkSize(transaction_bytes.size(), index+1);
-////	unsigned char byte = transaction_bytes.at(index);
-////	std::cout << "	: " << int_to_hex(byte) << std::endl;
-////    index += 1;
-////    std::string binary = std::bitset<8>(byte).to_string();
-////    if (binary.substr(0, 1) == "0") {
-////        end = true;
-////    }
-////    r += binary.substr(1, 7);
-////    if (end) {
-////        break;
-////    }
-////}
-////return binary_to_int(r);
-////}
-
-//////TODO: give error code bool and accept value refernces
-////std::tuple<uint32_t, uint32_t> get_height_index(BlockManager* blockman, uint256 txid) {
-////	const CBlockIndex* pindex{nullptr};
-////	{
-////		LOCK(cs_main);
-////		pindex = blockman->LookupBlockIndex(txid);
-////	}
-////	uint32_t block_height = pindex->nHeight;
-////	CBlock block;
-////	Consensus::Params consensus_params;
-////	ReadBlockFromDisk(block, pindex, consensus_params);
-////	uint32_t block_index;
-////	if (!block.LookupTransactionIndex(txid, block_index)) return std::make_tuple(0, 0);
-////	return std::make_tuple(block_height, blocks_index);
-////}

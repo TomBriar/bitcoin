@@ -1,16 +1,16 @@
 // Copyright (c) 2009-2010 Satoshi Nakamoto
-// Copyright (c) 2009-2021 The Bitcoin Core developers
+// Copyright (c) 2009-2022 The Bitcoin Core developers
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <wallet/walletdb.h>
 
-#include <fs.h>
 #include <key_io.h>
 #include <protocol.h>
 #include <serialize.h>
 #include <sync.h>
 #include <util/bip32.h>
+#include <util/fs.h>
 #include <util/system.h>
 #include <util/time.h>
 #include <util/translation.h>
@@ -321,7 +321,7 @@ public:
 };
 
 static bool
-ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
+ReadKeyValue(CWallet* pwallet, DataStream& ssKey, CDataStream& ssValue,
              CWalletScanState &wss, std::string& strType, std::string& strErr, const KeyFilterFn& filter_fn = nullptr) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet)
 {
     try {
@@ -347,7 +347,13 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
         } else if (strType == DBKeys::PURPOSE) {
             std::string strAddress;
             ssKey >> strAddress;
-            ssValue >> pwallet->m_address_book[DecodeDestination(strAddress)].purpose;
+            std::string purpose_str;
+            ssValue >> purpose_str;
+            std::optional<AddressPurpose> purpose{PurposeFromString(purpose_str)};
+            if (!purpose) {
+                pwallet->WalletLogPrintf("Warning: nonstandard purpose string '%s' for address '%s'\n", purpose_str, strAddress);
+            }
+            pwallet->m_address_book[DecodeDestination(strAddress)].purpose = purpose;
         } else if (strType == DBKeys::TX) {
             uint256 hash;
             ssKey >> hash;
@@ -609,7 +615,20 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
             ssKey >> strAddress;
             ssKey >> strKey;
             ssValue >> strValue;
-            pwallet->LoadDestData(DecodeDestination(strAddress), strKey, strValue);
+            const CTxDestination& dest{DecodeDestination(strAddress)};
+            if (strKey.compare("used") == 0) {
+                // Load "used" key indicating if an IsMine address has
+                // previously been spent from with avoid_reuse option enabled.
+                // The strValue is not used for anything currently, but could
+                // hold more information in the future. Current values are just
+                // "1" or "p" for present (which was written prior to
+                // f5ba424cd44619d9b9be88b8593d69a7ba96db26).
+                pwallet->LoadAddressPreviouslySpent(dest);
+            } else if (strKey.compare(0, 2, "rr") == 0) {
+                // Load "rr##" keys where ## is a decimal number, and strValue
+                // is a serialized RecentRequestEntry object.
+                pwallet->LoadAddressReceiveRequest(dest, strKey.substr(2), strValue);
+            }
         } else if (strType == DBKeys::HDCHAIN) {
             CHDChain chain;
             ssValue >> chain;
@@ -759,7 +778,7 @@ ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue,
     return true;
 }
 
-bool ReadKeyValue(CWallet* pwallet, CDataStream& ssKey, CDataStream& ssValue, std::string& strType, std::string& strErr, const KeyFilterFn& filter_fn)
+bool ReadKeyValue(CWallet* pwallet, DataStream& ssKey, CDataStream& ssValue, std::string& strType, std::string& strErr, const KeyFilterFn& filter_fn)
 {
     CWalletScanState dummy_wss;
     LOCK(pwallet->cs_wallet);
@@ -812,7 +831,8 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
 #endif
 
         // Get cursor
-        if (!m_batch->StartCursor())
+        std::unique_ptr<DatabaseCursor> cursor = m_batch->GetNewCursor();
+        if (!cursor)
         {
             pwallet->WalletLogPrintf("Error getting wallet database cursor\n");
             return DBErrors::CORRUPT;
@@ -821,16 +841,13 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
         while (true)
         {
             // Read next record
-            CDataStream ssKey(SER_DISK, CLIENT_VERSION);
+            DataStream ssKey{};
             CDataStream ssValue(SER_DISK, CLIENT_VERSION);
-            bool complete;
-            bool ret = m_batch->ReadAtCursor(ssKey, ssValue, complete);
-            if (complete) {
+            DatabaseCursor::Status status = cursor->Next(ssKey, ssValue);
+            if (status == DatabaseCursor::Status::DONE) {
                 break;
-            }
-            else if (!ret)
-            {
-                m_batch->CloseCursor();
+            } else if (status == DatabaseCursor::Status::FAIL) {
+                cursor.reset();
                 pwallet->WalletLogPrintf("Error reading next record from wallet database\n");
                 return DBErrors::CORRUPT;
             }
@@ -878,7 +895,6 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
     } catch (...) {
         result = DBErrors::CORRUPT;
     }
-    m_batch->CloseCursor();
 
     // Set the active ScriptPubKeyMans
     for (auto spk_man_pair : wss.m_active_external_spks) {
@@ -974,7 +990,7 @@ DBErrors WalletBatch::LoadWallet(CWallet* pwallet)
     return result;
 }
 
-DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::list<CWalletTx>& vWtx)
+DBErrors WalletBatch::FindWalletTxHashes(std::vector<uint256>& tx_hashes)
 {
     DBErrors result = DBErrors::LOAD_OK;
 
@@ -986,7 +1002,8 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::list<CWal
         }
 
         // Get cursor
-        if (!m_batch->StartCursor())
+        std::unique_ptr<DatabaseCursor> cursor = m_batch->GetNewCursor();
+        if (!cursor)
         {
             LogPrintf("Error getting wallet database cursor\n");
             return DBErrors::CORRUPT;
@@ -995,14 +1012,12 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::list<CWal
         while (true)
         {
             // Read next record
-            CDataStream ssKey(SER_DISK, CLIENT_VERSION);
-            CDataStream ssValue(SER_DISK, CLIENT_VERSION);
-            bool complete;
-            bool ret = m_batch->ReadAtCursor(ssKey, ssValue, complete);
-            if (complete) {
+            DataStream ssKey{};
+            DataStream ssValue{};
+            DatabaseCursor::Status status = cursor->Next(ssKey, ssValue);
+            if (status == DatabaseCursor::Status::DONE) {
                 break;
-            } else if (!ret) {
-                m_batch->CloseCursor();
+            } else if (status == DatabaseCursor::Status::FAIL) {
                 LogPrintf("Error reading next record from wallet database\n");
                 return DBErrors::CORRUPT;
             }
@@ -1012,25 +1027,21 @@ DBErrors WalletBatch::FindWalletTx(std::vector<uint256>& vTxHash, std::list<CWal
             if (strType == DBKeys::TX) {
                 uint256 hash;
                 ssKey >> hash;
-                vTxHash.push_back(hash);
-                vWtx.emplace_back(/*tx=*/nullptr, TxStateInactive{});
-                ssValue >> vWtx.back();
+                tx_hashes.push_back(hash);
             }
         }
     } catch (...) {
         result = DBErrors::CORRUPT;
     }
-    m_batch->CloseCursor();
 
     return result;
 }
 
 DBErrors WalletBatch::ZapSelectTx(std::vector<uint256>& vTxHashIn, std::vector<uint256>& vTxHashOut)
 {
-    // build list of wallet TXs and hashes
+    // build list of wallet TX hashes
     std::vector<uint256> vTxHash;
-    std::list<CWalletTx> vWtx;
-    DBErrors err = FindWalletTx(vTxHash, vWtx);
+    DBErrors err = FindWalletTxHashes(vTxHash);
     if (err != DBErrors::LOAD_OK) {
         return err;
     }
@@ -1090,16 +1101,28 @@ void MaybeCompactWalletDB(WalletContext& context)
     fOneThread = false;
 }
 
-bool WalletBatch::WriteDestData(const std::string &address, const std::string &key, const std::string &value)
+bool WalletBatch::WriteAddressPreviouslySpent(const CTxDestination& dest, bool previously_spent)
 {
-    return WriteIC(std::make_pair(DBKeys::DESTDATA, std::make_pair(address, key)), value);
+    auto key{std::make_pair(DBKeys::DESTDATA, std::make_pair(EncodeDestination(dest), std::string("used")))};
+    return previously_spent ? WriteIC(key, std::string("1")) : EraseIC(key);
 }
 
-bool WalletBatch::EraseDestData(const std::string &address, const std::string &key)
+bool WalletBatch::WriteAddressReceiveRequest(const CTxDestination& dest, const std::string& id, const std::string& receive_request)
 {
-    return EraseIC(std::make_pair(DBKeys::DESTDATA, std::make_pair(address, key)));
+    return WriteIC(std::make_pair(DBKeys::DESTDATA, std::make_pair(EncodeDestination(dest), "rr" + id)), receive_request);
 }
 
+bool WalletBatch::EraseAddressReceiveRequest(const CTxDestination& dest, const std::string& id)
+{
+    return EraseIC(std::make_pair(DBKeys::DESTDATA, std::make_pair(EncodeDestination(dest), "rr" + id)));
+}
+
+bool WalletBatch::EraseAddressData(const CTxDestination& dest)
+{
+    DataStream prefix;
+    prefix << DBKeys::DESTDATA << EncodeDestination(dest);
+    return m_batch->ErasePrefix(prefix);
+}
 
 bool WalletBatch::WriteHDChain(const CHDChain& chain)
 {
@@ -1114,7 +1137,8 @@ bool WalletBatch::WriteWalletFlags(const uint64_t flags)
 bool WalletBatch::EraseRecords(const std::unordered_set<std::string>& types)
 {
     // Get cursor
-    if (!m_batch->StartCursor())
+    std::unique_ptr<DatabaseCursor> cursor = m_batch->GetNewCursor();
+    if (!cursor)
     {
         return false;
     }
@@ -1123,16 +1147,12 @@ bool WalletBatch::EraseRecords(const std::unordered_set<std::string>& types)
     while (true)
     {
         // Read next record
-        CDataStream key(SER_DISK, CLIENT_VERSION);
-        CDataStream value(SER_DISK, CLIENT_VERSION);
-        bool complete;
-        bool ret = m_batch->ReadAtCursor(key, value, complete);
-        if (complete) {
+        DataStream key{};
+        DataStream value{};
+        DatabaseCursor::Status status = cursor->Next(key, value);
+        if (status == DatabaseCursor::Status::DONE) {
             break;
-        }
-        else if (!ret)
-        {
-            m_batch->CloseCursor();
+        } else if (status == DatabaseCursor::Status::FAIL) {
             return false;
         }
 
@@ -1146,7 +1166,6 @@ bool WalletBatch::EraseRecords(const std::unordered_set<std::string>& types)
             m_batch->Erase(key_data);
         }
     }
-    m_batch->CloseCursor();
     return true;
 }
 
@@ -1242,45 +1261,5 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
     error = Untranslated(strprintf("Failed to open database path '%s'. Build does not support Berkeley DB database format.", fs::PathToString(path)));
     status = DatabaseStatus::FAILED_BAD_FORMAT;
     return nullptr;
-}
-
-/** Return object for accessing dummy database with no read/write capabilities. */
-std::unique_ptr<WalletDatabase> CreateDummyWalletDatabase()
-{
-    return std::make_unique<DummyDatabase>();
-}
-
-/** Return object for accessing temporary in-memory database. */
-std::unique_ptr<WalletDatabase> CreateMockWalletDatabase(DatabaseOptions& options)
-{
-
-    std::optional<DatabaseFormat> format;
-    if (options.require_format) format = options.require_format;
-    if (!format) {
-#ifdef USE_BDB
-        format = DatabaseFormat::BERKELEY;
-#endif
-#ifdef USE_SQLITE
-        format = DatabaseFormat::SQLITE;
-#endif
-    }
-
-    if (format == DatabaseFormat::SQLITE) {
-#ifdef USE_SQLITE
-        return std::make_unique<SQLiteDatabase>(":memory:", "", options, true);
-#endif
-        assert(false);
-    }
-
-#ifdef USE_BDB
-    return std::make_unique<BerkeleyDatabase>(std::make_shared<BerkeleyEnvironment>(), "", options);
-#endif
-    assert(false);
-}
-
-std::unique_ptr<WalletDatabase> CreateMockWalletDatabase()
-{
-    DatabaseOptions options;
-    return CreateMockWalletDatabase(options);
 }
 } // namespace wallet
