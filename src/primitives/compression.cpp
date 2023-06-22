@@ -150,7 +150,7 @@ CTxOut::CTxOut(const CCompressedTxOut& txout) {
 		std::vector<std::vector<unsigned char>> vSolutions;
 		vSolutions.push_back(std::move(txout.scriptPubKey()));
 		CTxDestination destination;
-		if(BuildDestination(vSolutions, txout.scriptType(), destination)) throw std::ios_base::failure("Script Deseralization Faild, Either Invalid Payload or Script Type.");
+		if(!BuildDestination(vSolutions, txout.scriptType(), destination)) throw std::ios_base::failure("Script Deseralization Faild, Either Invalid Payload or Script Type.");
 		scriptPubKey = GetScriptForDestination(destination);
 	} else {
 		scriptPubKey = CScript(txout.scriptPubKey().begin(), txout.scriptPubKey().end());
