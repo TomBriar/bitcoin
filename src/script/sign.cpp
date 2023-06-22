@@ -755,7 +755,6 @@ bool IsSegWitOutput(const SigningProvider& provider, const CScript& script)
 
 bool SignTransaction(CMutableTransaction& mtx, const SigningProvider* keystore, const std::map<COutPoint, Coin>& coins, int nHashType, std::map<int, bilingual_str>& input_errors)
 {
-	std::cout << "test"	<< std::endl;
     bool fHashSingle = ((nHashType & ~SIGHASH_ANYONECANPAY) == SIGHASH_SINGLE);
 
     // Use CTransaction for the constant parts of the
@@ -771,7 +770,6 @@ bool SignTransaction(CMutableTransaction& mtx, const SigningProvider* keystore, 
             txdata.Init(txConst, /*spent_outputs=*/{}, /*force=*/true);
             break;
         } else {
-			std::cout << "test script = " << HexStr(coin->second.out.scriptPubKey) << std::endl;
             spent_outputs.emplace_back(coin->second.out.nValue, coin->second.out.scriptPubKey);
         }
     }

@@ -380,13 +380,16 @@ void compression_roundtrip_initialize()
 
 FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 {
-	std::cout << "START-------------------------------" << std::endl;
 	FuzzedDataProvider fdp(buffer.data(), buffer.size());
 	std::vector<secp256k1_keypair> keypairs;
 	CMutableTransaction mtx;
 
 	mtx.nVersion = fdp.ConsumeIntegral<uint32_t>();
-	mtx.nLockTime = fdp.ConsumeIntegral<uint32_t>();
+	if (fdp.ConsumeBool()) {
+		mtx.nLockTime = fdp.ConsumeIntegral<uint8_t>();
+	} else {
+		mtx.nLockTime = fdp.ConsumeIntegral<uint32_t>();
+	}
 
 	uint32_t total = 0;
 	std::vector<CScript> input_scripts;
@@ -452,18 +455,15 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
 	if (sign)
 		assert(rpc->SignTransaction(ctx, mtx, keypairs));
 
-	std::cout << "sttx: " << CTransaction(mtx).ToString() << std::endl;
 
     const CTransaction tx = CTransaction(mtx);
     CCompressedTransaction compressed_transaction = CCompressedTransaction(ctx, tx, compressed_txids, input_scripts);
 	
-    std::cout << "ctx: " << compressed_transaction.ToString() << std::endl;
 
     CDataStream stream(SER_DISK, 0);
     compressed_transaction.Serialize(stream);
     CCompressedTransaction uct = CCompressedTransaction(deserialize, stream);
     
-    std::cout << "uct: " << uct.ToString() << std::endl;
     assert(compressed_transaction == uct);
 	
 
@@ -477,6 +477,5 @@ FUZZ_TARGET_INIT(compression_roundtrip, compression_roundtrip_initialize)
     	outs.push_back(coins[COutPoint(txids.at(index), uct.vin().at(index).prevout().n())].out);
     }
     CTransaction new_tx = CTransaction(CMutableTransaction(ctx, uct, txids, outs));
-    std::cout << "uctx: " << new_tx.ToString() << std::endl;
 	assert(tx == new_tx);
 }
