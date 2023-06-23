@@ -6,7 +6,6 @@
 
 #include <primitives/block.h>
 #include <primitives/transaction.h>
-#include <primitives/compression.h>
 #include <script/script.h>
 #include <script/sign.h>
 #include <serialize.h>
@@ -120,29 +119,6 @@ static bool CheckTxScriptsSanity(const CMutableTransaction& tx)
     }
 
     return true;
-}
-
-static bool DecodeCompressedTx(CCompressedTransaction& ctx, const std::vector<unsigned char>& ctx_data) {
-	CDataStream ssData(ctx_data, SER_NETWORK, PROTOCOL_VERSION);
-	try {
-		ssData >> ctx;
-		return true;
-	} catch (const std::exception& exc) {
-		std::cout << exc.what() << std::endl;
- 		//TODO remove ^
-		// Fall through.
-	}
-	return false;
-}
-
-bool DecodeCompressedHexTx(CCompressedTransaction& ctx, const std::string& hex_ctx)
-{
-    if (!IsHex(hex_ctx)) {
-        return false;
-    }
-
-    std::vector<unsigned char> ctxData(ParseHex(hex_ctx));
-    return DecodeCompressedTx(ctx, ctxData);
 }
 
 static bool DecodeTx(CMutableTransaction& tx, const std::vector<unsigned char>& tx_data, bool try_no_witness, bool try_witness)

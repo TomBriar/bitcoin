@@ -13,7 +13,6 @@
 #include <util/strencodings.h>
 
 #include <string>
-#include <iostream>
 
 typedef std::vector<unsigned char> valtype;
 
