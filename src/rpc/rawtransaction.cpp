@@ -50,7 +50,6 @@
 
 #include <secp256k1.h>
 
-
 using node::AnalyzePSBT;
 using node::FindCoins;
 using node::GetTransaction;
