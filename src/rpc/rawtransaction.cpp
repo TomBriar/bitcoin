@@ -49,9 +49,7 @@
 #include <univalue.h>
 
 #include <secp256k1.h>
-#include <secp256k1_recovery.h>
-#include <secp256k1_schnorrsig.h>
-#include <secp256k1_extrakeys.h>
+
 
 using node::AnalyzePSBT;
 using node::FindCoins;

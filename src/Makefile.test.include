@@ -86,6 +86,7 @@ BITCOIN_TESTS =\
   test/coinstatsindex_tests.cpp \
   test/compilerbug_tests.cpp \
   test/crypto_tests.cpp \
+  test/compress_tests.cpp \
   test/cuckoocache_tests.cpp \
   test/dbwrapper_tests.cpp \
   test/denialofservice_tests.cpp \

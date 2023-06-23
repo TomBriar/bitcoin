@@ -150,25 +150,6 @@ std::string GetOpName(opcodetype opcode)
     }
 }
 
-////CScript::CScript(const std::vector<unsigned char>& payload, scripttype scriptType) {
-////	switch (scriptType) {
-////		case scripttype::P2PK : if (payload.size() == 0x41) { (*this) << 0x41 << payload << 0xac;}
-////			break;
-////		case scripttype::P2SH : if (payload.size() == 0x14) { (*this) << 0xa9 << 0x14 << payload << 0x87;}
-////			break;
-////		case scripttype::P2PKH : if (payload.size() == 0x14) { (*this) << 0x76 << 0xa9 << 0x14 << payload << 0x88 << 0xac;}
-////			break;
-////		case scripttype::P2WSH : if (payload.size() == 0x14) { (*this) << 0x00 << 0x14 << payload;}
-////			break;
-////		case scripttype::P2WPKH : if (payload.size() == 0x32) { (*this) << 0x00 << 0x20 << payload;}
-////			break;
-////		case scripttype::P2TR : if (payload.size() == 0x32) { (*this) << 0x51 << 0x20 << payload;}
-////			break;
-////		default : { (*this) << payload;}
-////			break;
-////	}
-////}
-
 unsigned int CScript::GetSigOpCount(bool fAccurate) const
 {
     unsigned int n = 0;
@@ -270,25 +251,6 @@ bool CScript::IsPayToTaproot() const
             (*this)[0] == OP_1 &&
             (*this)[1] == 0x20);
 }
-
-////scripttype CScript::GetScriptType() const 
-////{
-////	if (this->IsPayToPublicKey()) {
-////		return scripttype::P2PK;
-////	} else if (this->IsPayToScriptHash()) {
-////		return scripttype::P2SH;
-////	} else if (this->IsPayToPublicKeyHash()) {
-////		return scripttype::P2PKH;
-////	} else if (this->IsPayToWitnessScriptHash()) {
-////		return scripttype::P2WSH;
-////	} else if (this->IsPayToWitnessPublicKeyHash()) {
-////		return scripttype::P2WPKH;
-////	} else if (this->IsPayToTaproot()) {
-////		return scripttype::P2TR;
-////	}
-////	return scripttype::Custom;
-////}
-
 
 // A witness program is any valid CScript that consists of a 1-byte push opcode
 // followed by a data push between 2 and 40 bytes.

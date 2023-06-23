@@ -5,7 +5,6 @@
 
 #include <primitives/transaction.h>
 
-
 #include <consensus/amount.h>
 #include <hash.h>
 #include <script/script.h>
@@ -15,11 +14,9 @@
 #include <util/strencodings.h>
 #include <version.h>
 
+#include <cmath>
 #include <cassert>
 #include <stdexcept>
-
-#include <cmath>
-
 
 std::string COutPoint::ToString() const
 {
