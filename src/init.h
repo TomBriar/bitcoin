@@ -38,13 +38,13 @@ void InitParameterInteraction(ArgsManager& args);
  *  @note This can be done before daemonization. Do not call Shutdown() if this function fails.
  *  @pre Parameters should be parsed and config file should be read.
  */
-bool AppInitBasicSetup(const ArgsManager& args, std::atomic<int>& exit_status);
+bool AppInitBasicSetup(const ArgsManager& args);
 /**
  * Initialization: parameter interaction.
  * @note This can be done before daemonization. Do not call Shutdown() if this function fails.
  * @pre Parameters should be parsed and config file should be read, AppInitBasicSetup should have been called.
  */
-bool AppInitParameterInteraction(const ArgsManager& args);
+bool AppInitParameterInteraction(const ArgsManager& args, bool use_syscall_sandbox = true);
 /**
  * Initialization sanity checks.
  * @note This can be done before daemonization. Do not call Shutdown() if this function fails.

@@ -10,7 +10,7 @@ Otherwise the exit status will be 1 and it will log which executables failed whi
 import sys
 from typing import List
 
-import lief
+import lief #type:ignore
 
 def check_ELF_RELRO(binary) -> bool:
     '''
@@ -113,7 +113,7 @@ def check_ELF_control_flow(binary) -> bool:
     main = binary.get_function_address('main')
     content = binary.get_content_from_virtual_address(main, 4, lief.Binary.VA_TYPES.AUTO)
 
-    if content.tolist() == [243, 15, 30, 250]: # endbr64
+    if content == [243, 15, 30, 250]: # endbr64
         return True
     return False
 
@@ -142,7 +142,7 @@ def check_PE_control_flow(binary) -> bool:
 
     content = binary.get_content_from_virtual_address(virtual_address, 4, lief.Binary.VA_TYPES.VA)
 
-    if content.tolist() == [243, 15, 30, 250]: # endbr64
+    if content == [243, 15, 30, 250]: # endbr64
         return True
     return False
 
@@ -157,6 +157,13 @@ def check_MACHO_NOUNDEFS(binary) -> bool:
     Check for no undefined references.
     '''
     return binary.header.has(lief.MachO.HEADER_FLAGS.NOUNDEFS)
+
+def check_MACHO_LAZY_BINDINGS(binary) -> bool:
+    '''
+    Check for no lazy bindings.
+    We don't use or check for MH_BINDATLOAD. See #18295.
+    '''
+    return binary.dyld_info.lazy_bind == (0,0)
 
 def check_MACHO_Canary(binary) -> bool:
     '''
@@ -183,7 +190,7 @@ def check_MACHO_control_flow(binary) -> bool:
     '''
     content = binary.get_content_from_virtual_address(binary.entrypoint, 4, lief.Binary.VA_TYPES.AUTO)
 
-    if content.tolist() == [243, 15, 30, 250]: # endbr64
+    if content == [243, 15, 30, 250]: # endbr64
         return True
     return False
 
@@ -207,6 +214,7 @@ BASE_PE = [
 
 BASE_MACHO = [
     ('NOUNDEFS', check_MACHO_NOUNDEFS),
+    ('LAZY_BINDINGS', check_MACHO_LAZY_BINDINGS),
     ('Canary', check_MACHO_Canary),
 ]
 

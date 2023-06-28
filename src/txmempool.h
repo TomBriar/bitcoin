@@ -33,11 +33,8 @@
 #include <util/result.h>
 
 #include <boost/multi_index/hashed_index.hpp>
-#include <boost/multi_index/identity.hpp>
-#include <boost/multi_index/indexed_by.hpp>
 #include <boost/multi_index/ordered_index.hpp>
 #include <boost/multi_index/sequenced_index.hpp>
-#include <boost/multi_index/tag.hpp>
 #include <boost/multi_index_container.hpp>
 
 class CBlockIndex;
@@ -222,7 +219,7 @@ struct TxMempoolInfo
     CAmount fee;
 
     /** Virtual size of the transaction. */
-    int32_t vsize;
+    size_t vsize;
 
     /** The fee delta. */
     int64_t nFeeDelta;
@@ -519,34 +516,14 @@ public:
     void ApplyDelta(const uint256& hash, CAmount &nFeeDelta) const EXCLUSIVE_LOCKS_REQUIRED(cs);
     void ClearPrioritisation(const uint256& hash) EXCLUSIVE_LOCKS_REQUIRED(cs);
 
-    struct delta_info {
-        /** Whether this transaction is in the mempool. */
-        const bool in_mempool;
-        /** The fee delta added using PrioritiseTransaction(). */
-        const CAmount delta;
-        /** The modified fee (base fee + delta) of this entry. Only present if in_mempool=true. */
-        std::optional<CAmount> modified_fee;
-        /** The prioritised transaction's txid. */
-        const uint256 txid;
-    };
-    /** Return a vector of all entries in mapDeltas with their corresponding delta_info. */
-    std::vector<delta_info> GetPrioritisedTransactions() const EXCLUSIVE_LOCKS_REQUIRED(!cs);
-
     /** Get the transaction in the pool that spends the same prevout */
     const CTransaction* GetConflictTx(const COutPoint& prevout) const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /** Returns an iterator to the given hash, if found */
     std::optional<txiter> GetIter(const uint256& txid) const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
-    /** Translate a set of hashes into a set of pool iterators to avoid repeated lookups.
-     * Does not require that all of the hashes correspond to actual transactions in the mempool,
-     * only returns the ones that exist. */
+    /** Translate a set of hashes into a set of pool iterators to avoid repeated lookups */
     setEntries GetIterSet(const std::set<uint256>& hashes) const EXCLUSIVE_LOCKS_REQUIRED(cs);
-
-    /** Translate a list of hashes into a list of mempool iterators to avoid repeated lookups.
-     * The nth element in txids becomes the nth element in the returned vector. If any of the txids
-     * don't actually exist in the mempool, returns an empty vector. */
-    std::vector<txiter> GetIterVec(const std::vector<uint256>& txids) const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /** Remove a set of transactions from the mempool.
      *  If a transaction is in this set, then all in-mempool descendants must
@@ -607,12 +584,6 @@ public:
         const CTxMemPoolEntry &entry,
         const Limits& limits,
         bool fSearchForParents = true) const EXCLUSIVE_LOCKS_REQUIRED(cs);
-
-    /** Collect the entire cluster of connected transactions for each transaction in txids.
-     * All txids must correspond to transaction entries in the mempool, otherwise this returns an
-     * empty vector. This call will also exit early and return an empty vector if it collects 500 or
-     * more transactions as a DoS protection. */
-    std::vector<txiter> GatherClusters(const std::vector<uint256>& txids) const EXCLUSIVE_LOCKS_REQUIRED(cs);
 
     /** Calculate all in-mempool ancestors of a set of transactions not already in the mempool and
      * check ancestor and descendant limits. Heuristics are used to estimate the ancestor and

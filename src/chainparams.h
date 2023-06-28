@@ -6,9 +6,20 @@
 #ifndef BITCOIN_CHAINPARAMS_H
 #define BITCOIN_CHAINPARAMS_H
 
-#include <kernel/chainparams.h> // IWYU pragma: export
+#include <kernel/chainparams.h>
 
+#include <consensus/params.h>
+#include <netaddress.h>
+#include <primitives/block.h>
+#include <protocol.h>
+#include <util/chaintype.h>
+#include <util/hash_type.h>
+
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 class ArgsManager;
 

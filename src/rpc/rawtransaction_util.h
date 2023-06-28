@@ -8,6 +8,10 @@
 #include <map>
 #include <string>
 #include <optional>
+#include <node/blockstorage.h>
+#include <node/transaction.h>
+#include <secp256k1.h>
+using node::GetTransaction;
 
 struct bilingual_str;
 class FillableSigningProvider;
@@ -16,6 +20,10 @@ struct CMutableTransaction;
 class Coin;
 class COutPoint;
 class SigningProvider;
+
+const uint32_t SEQUENCE_F0 = 0xFFFFFFF0;
+const uint32_t SEQUENCE_FE = 0xFFFFFFFE;
+const uint32_t SEQUENCE_FF = 0xFFFFFFFF;
 
 /**
  * Sign a transaction with the given keystore and previous transactions
@@ -47,5 +55,29 @@ void AddOutputs(CMutableTransaction& rawTx, const UniValue& outputs_in);
 
 /** Create a transaction from univalue parameters */
 CMutableTransaction ConstructTransaction(const UniValue& inputs_in, const UniValue& outputs_in, const UniValue& locktime, std::optional<bool> rbf);
+
+////int binary_to_int(std::string binary);
+
+////std::string binary_to_hex(std::string binary);
+
+////std::string int_to_hex(int64_t byte);
+
+////std::string hex_to_binary(std::string hex);
+
+////std::vector<unsigned char> to_varint(uint64_t value);
+
+////void checkSize(int size, int index);
+
+////uint64_t from_varint(std::vector<unsigned char>& transaction_bytes, int& index);
+
+////bool get_input_type(secp256k1_context* ctx, CTxIn input, CTransactionRef tx, std::vector<unsigned char>& vchRet);
+
+////OutputScriptType get_output_type(CScript script_pubkey, std::vector<unsigned char>& vchRet);
+
+////int get_first_push_bytes(std::vector<unsigned char>& data, CScript script);
+
+////std::vector<unsigned char> hex_to_bytes(std::string hex);
+
+
 
 #endif // BITCOIN_RPC_RAWTRANSACTION_UTIL_H

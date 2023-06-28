@@ -9,6 +9,7 @@
 #include <consensus/amount.h>
 #include <prevector.h>
 #include <script/script.h>
+#include <secp256k1.h>
 #include <serialize.h>
 #include <uint256.h>
 
@@ -151,6 +152,8 @@ public:
     std::string ToString() const;
 };
 
+struct CCompressedTxOut;
+
 /** An output of a transaction.  It contains the public key that the next input
  * must be able to sign with to claim it.
  */
@@ -165,6 +168,7 @@ public:
         SetNull();
     }
 
+    CTxOut(const CCompressedTxOut& txout);
     CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn);
 
     SERIALIZE_METHODS(CTxOut, obj) { READWRITE(obj.nValue, obj.scriptPubKey); }
@@ -375,6 +379,8 @@ public:
     }
 };
 
+struct CCompressedTransaction;
+
 /** A mutable version of CTransaction. */
 struct CMutableTransaction
 {
@@ -385,6 +391,7 @@ struct CMutableTransaction
 
     explicit CMutableTransaction();
     explicit CMutableTransaction(const CTransaction& tx);
+	explicit CMutableTransaction(const secp256k1_context* ctx, const CCompressedTransaction& tx, const std::vector<uint256>& txids, const std::vector<CTxOut>& outs);
 
     template <typename Stream>
     inline void Serialize(Stream& s) const {

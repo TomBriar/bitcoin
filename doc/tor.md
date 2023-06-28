@@ -2,7 +2,9 @@
 
 It is possible to run Bitcoin Core as a Tor onion service, and connect to such services.
 
-The following directions assume you have a Tor proxy running on port 9050. Many distributions default to having a SOCKS proxy listening on port 9050, but others may not. In particular, the Tor Browser Bundle defaults to listening on port 9150.
+The following directions assume you have a Tor proxy running on port 9050. Many distributions default to having a SOCKS proxy listening on port 9050, but others may not. In particular, the Tor Browser Bundle defaults to listening on port 9150. See [Tor Project FAQ:TBBSocksPort](https://www.torproject.org/docs/faq.html.en#TBBSocksPort) for how to properly
+configure Tor.
+
 ## Compatibility
 
 - Starting with version 22.0, Bitcoin Core only supports Tor version 3 hidden
@@ -25,7 +27,8 @@ CLI `-addrinfo` returns the number of addresses known to your node per
 network. This can be useful to see how many onion peers your node knows,
 e.g. for `-onlynet=onion`.
 
-You can use the `getnodeaddresses` RPC to fetch a number of onion peers known to your node; run `bitcoin-cli help getnodeaddresses` for details.
+To fetch a number of onion addresses that your node knows, for example seven
+addresses, use the `getnodeaddresses 7 onion` RPC.
 
 ## 1. Run Bitcoin Core behind a Tor proxy
 

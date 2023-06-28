@@ -24,11 +24,6 @@ if [ "$RUN_FUZZ_TESTS" = "true" ]; then
   if [ ! -d "$DIR_FUZZ_IN" ]; then
     git clone --depth=1 https://github.com/bitcoin-core/qa-assets "${DIR_QA_ASSETS}"
   fi
-  (
-    cd "${DIR_QA_ASSETS}"
-    echo "Using qa-assets repo from commit ..."
-    git log -1
-  )
 elif [ "$RUN_UNIT_TESTS" = "true" ] || [ "$RUN_UNIT_TESTS_SEQUENTIAL" = "true" ]; then
   export DIR_UNIT_TEST_DATA=${DIR_QA_ASSETS}/unit_test_data/
   if [ ! -d "$DIR_UNIT_TEST_DATA" ]; then
@@ -57,7 +52,10 @@ fi
 
 if [ -z "$NO_DEPENDS" ]; then
   if [[ $CI_IMAGE_NAME_TAG == *centos* ]]; then
-    SHELL_OPTS="CONFIG_SHELL=/bin/dash"
+    # CentOS has problems building the depends if the config shell is not explicitly set
+    # (i.e. for libevent a Makefile with an empty SHELL variable is generated, leading to
+    #  an error as the first command is executed)
+    SHELL_OPTS="LC_ALL=en_US.UTF-8 CONFIG_SHELL=/bin/dash"
   else
     SHELL_OPTS="CONFIG_SHELL="
   fi
@@ -67,7 +65,7 @@ if [ "$DOWNLOAD_PREVIOUS_RELEASES" = "true" ]; then
   test/get_previous_releases.py -b -t "$PREVIOUS_RELEASES_DIR"
 fi
 
-BITCOIN_CONFIG_ALL="--disable-dependency-tracking"
+BITCOIN_CONFIG_ALL="--enable-suppress-external-warnings --disable-dependency-tracking"
 if [ -z "$NO_DEPENDS" ]; then
   BITCOIN_CONFIG_ALL="${BITCOIN_CONFIG_ALL} CONFIG_SITE=$DEPENDS_DIR/$HOST/share/config.site"
 fi
@@ -105,6 +103,14 @@ make distdir VERSION="$HOST"
 cd "${BASE_BUILD_DIR}/bitcoin-$HOST"
 
 bash -c "./configure --cache-file=../config.cache $BITCOIN_CONFIG_ALL $BITCOIN_CONFIG" || ( (cat config.log) && false)
+
+if [[ ${USE_MEMORY_SANITIZER} == "true" ]]; then
+  # MemorySanitizer (MSAN) does not support tracking memory initialization done by
+  # using the Linux getrandom syscall. Avoid using getrandom by undefining
+  # HAVE_SYS_GETRANDOM. See https://github.com/google/sanitizers/issues/852 for
+  # details.
+  grep -v HAVE_SYS_GETRANDOM src/config/bitcoin-config.h > src/config/bitcoin-config.h.tmp && mv src/config/bitcoin-config.h.tmp src/config/bitcoin-config.h
+fi
 
 if [[ "${RUN_TIDY}" == "true" ]]; then
   MAYBE_BEAR="bear --config src/.bear-tidy-config"
@@ -151,24 +157,63 @@ if [ "${RUN_TIDY}" = "true" ]; then
   set -eo pipefail
   cd "${BASE_BUILD_DIR}/bitcoin-$HOST/src/"
   ( run-clang-tidy-16 -quiet "${MAKEJOBS}" ) | grep -C5 "error"
-  # Filter out files by regex here, because regex may not be
-  # accepted in src/.bear-tidy-config
-  # Filter out:
-  # * qt qrc and moc generated files
-  # * secp256k1
-  jq 'map(select(.file | test("src/qt/qrc_.*\\.cpp$|/moc_.*\\.cpp$|src/secp256k1/src/") | not))' ../compile_commands.json > tmp.json
-  mv tmp.json ../compile_commands.json
   cd "${BASE_BUILD_DIR}/bitcoin-$HOST/"
   python3 "${DIR_IWYU}/include-what-you-use/iwyu_tool.py" \
+           src/common/args.cpp \
+           src/common/config.cpp \
+           src/common/init.cpp \
+           src/common/url.cpp \
+           src/compat \
+           src/dbwrapper.cpp \
+           src/init \
+           src/kernel \
+           src/node/blockmanager_args.cpp \
+           src/node/chainstate.cpp \
+           src/node/chainstatemanager_args.cpp \
+           src/node/mempool_args.cpp \
+           src/node/minisketchwrapper.cpp \
+           src/node/utxo_snapshot.cpp \
+           src/node/validation_cache_args.cpp \
+           src/policy/feerate.cpp \
+           src/policy/packages.cpp \
+           src/policy/settings.cpp \
+           src/primitives/transaction.cpp \
+           src/random.cpp \
+           src/rpc/fees.cpp \
+           src/rpc/signmessage.cpp \
+           src/test/fuzz/string.cpp \
+           src/test/fuzz/txorphan.cpp \
+           src/test/fuzz/util \
+           src/test/util/coins.cpp \
+           src/uint256.cpp \
+           src/util/bip32.cpp \
+           src/util/bytevectorhash.cpp \
+           src/util/check.cpp \
+           src/util/error.cpp \
+           src/util/exception.cpp \
+           src/util/getuniquepath.cpp \
+           src/util/hasher.cpp \
+           src/util/message.cpp \
+           src/util/moneystr.cpp \
+           src/util/serfloat.cpp \
+           src/util/spanparsing.cpp \
+           src/util/strencodings.cpp \
+           src/util/string.cpp \
+           src/util/syserror.cpp \
+           src/util/threadinterrupt.cpp \
+           src/zmq \
            -p . "${MAKEJOBS}" \
            -- -Xiwyu --cxx17ns -Xiwyu --mapping_file="${BASE_BUILD_DIR}/bitcoin-$HOST/contrib/devtools/iwyu/bitcoin.core.imp" \
-           -Xiwyu --max_line_length=160 \
            2>&1 | tee /tmp/iwyu_ci.out
   cd "${BASE_ROOT_DIR}/src"
   python3 "${DIR_IWYU}/include-what-you-use/fix_includes.py" --nosafe_headers < /tmp/iwyu_ci.out
   git --no-pager diff
 fi
 
+if [ "$RUN_SECURITY_TESTS" = "true" ]; then
+  make test-security-check
+fi
+
 if [ "$RUN_FUZZ_TESTS" = "true" ]; then
-  bash -c "LD_LIBRARY_PATH=${DEPENDS_DIR}/${HOST}/lib test/fuzz/test_runner.py ${FUZZ_TESTS_CONFIG} $MAKEJOBS -l DEBUG ${DIR_FUZZ_IN} --empty_min_time=60"
+  bash -c "LD_LIBRARY_PATH=${DEPENDS_DIR}/${HOST}/lib test/fuzz/test_runner.py ${FUZZ_TESTS_CONFIG} $MAKEJOBS -l DEBUG ${DIR_FUZZ_IN}"
 fi

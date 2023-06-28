@@ -19,8 +19,9 @@
 #include <rpc/util.h>
 #include <scheduler.h>
 #include <univalue.h>
-#include <util/any.h>
 #include <util/check.h>
+#include <util/syscall_sandbox.h>
+#include <util/system.h>
 
 #include <stdint.h>
 #ifdef HAVE_MALLOC_INFO
@@ -68,6 +69,27 @@ static RPCHelpMan setmocktime()
 },
     };
 }
+
+#if defined(USE_SYSCALL_SANDBOX)
+static RPCHelpMan invokedisallowedsyscall()
+{
+    return RPCHelpMan{
+        "invokedisallowedsyscall",
+        "\nInvoke a disallowed syscall to trigger a syscall sandbox violation. Used for testing purposes.\n",
+        {},
+        RPCResult{RPCResult::Type::NONE, "", ""},
+        RPCExamples{
+            HelpExampleCli("invokedisallowedsyscall", "") + HelpExampleRpc("invokedisallowedsyscall", "")},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            if (!Params().IsTestChain()) {
+                throw std::runtime_error("invokedisallowedsyscall is used for testing only.");
+            }
+            TestDisallowedSandboxCall();
+            return UniValue::VNULL;
+        },
+    };
+}
+#endif // USE_SYSCALL_SANDBOX
 
 static RPCHelpMan mockscheduler()
 {
@@ -141,7 +163,7 @@ static RPCHelpMan getmemoryinfo()
                 {
                     {"mode", RPCArg::Type::STR, RPCArg::Default{"stats"}, "determines what kind of information is returned.\n"
             "  - \"stats\" returns general statistics about memory usage in the daemon.\n"
-            "  - \"mallocinfo\" returns an XML string describing low-level heap state (only available if compiled with glibc)."},
+            "  - \"mallocinfo\" returns an XML string describing low-level heap state (only available if compiled with glibc 2.10+)."},
                 },
                 {
                     RPCResult{"mode \"stats\"",
@@ -406,6 +428,9 @@ void RegisterNodeRPCCommands(CRPCTable& t)
         {"hidden", &echo},
         {"hidden", &echojson},
         {"hidden", &echoipc},
+#if defined(USE_SYSCALL_SANDBOX)
+        {"hidden", &invokedisallowedsyscall},
+#endif // USE_SYSCALL_SANDBOX
     };
     for (const auto& c : commands) {
         t.appendCommand(c.name, &c);

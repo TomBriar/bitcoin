@@ -9,7 +9,6 @@
 
 #include "checkmem.h"
 #include "scalar.h"
-#include "util.h"
 
 #include <string.h>
 

@@ -112,4 +112,5 @@ There are several ways to see your CJDNS address in Bitcoin Core:
 To see which CJDNS peers your node is connected to, use `bitcoin-cli -netinfo 4`
 or the `getpeerinfo` RPC (i.e. `bitcoin-cli getpeerinfo`).
 
-You can use the `getnodeaddresses` RPC to fetch a number of CJDNS peers known to your node; run `bitcoin-cli help getnodeaddresses` for details.
+To see which CJDNS addresses your node knows, use the `getnodeaddresses 0 cjdns`
+RPC.

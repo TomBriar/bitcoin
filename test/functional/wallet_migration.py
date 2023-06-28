@@ -6,7 +6,6 @@
 
 import os
 import random
-import shutil
 from test_framework.descriptors import descsum_create
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -282,7 +281,7 @@ class WalletMigrationTest(BitcoinTestFramework):
         imports0.importaddress(import_sent_addr)
         received_sent_watchonly_txid = default.sendtoaddress(import_sent_addr, 10)
         received_sent_watchonly_vout = find_vout_for_address(self.nodes[0], received_sent_watchonly_txid, import_sent_addr)
-        send = default.sendall(recipients=[default.getnewaddress()], inputs=[{"txid": received_sent_watchonly_txid, "vout": received_sent_watchonly_vout}])
+        send = default.sendall(recipients=[default.getnewaddress()], options={"inputs": [{"txid": received_sent_watchonly_txid, "vout": received_sent_watchonly_vout}]})
         sent_watchonly_txid = send["txid"]
 
         self.generate(self.nodes[0], 1)
@@ -471,40 +470,6 @@ class WalletMigrationTest(BitcoinTestFramework):
 
         assert_equal(bals, wallet.getbalances())
 
-    def test_default_wallet(self):
-        self.log.info("Test migration of the wallet named as the empty string")
-        wallet = self.create_legacy_wallet("")
-
-        wallet.migratewallet()
-        info = wallet.getwalletinfo()
-        assert_equal(info["descriptors"], True)
-        assert_equal(info["format"], "sqlite")
-
-    def test_direct_file(self):
-        self.log.info("Test migration of a wallet that is not in a wallet directory")
-        wallet = self.create_legacy_wallet("plainfile")
-        wallet.unloadwallet()
-
-        wallets_dir = os.path.join(self.nodes[0].datadir, "regtest", "wallets")
-        wallet_path = os.path.join(wallets_dir, "plainfile")
-        wallet_dat_path = os.path.join(wallet_path, "wallet.dat")
-        shutil.copyfile(wallet_dat_path, os.path.join(wallets_dir, "plainfile.bak"))
-        shutil.rmtree(wallet_path)
-        shutil.move(os.path.join(wallets_dir, "plainfile.bak"), wallet_path)
-
-        self.nodes[0].loadwallet("plainfile")
-        info = wallet.getwalletinfo()
-        assert_equal(info["descriptors"], False)
-        assert_equal(info["format"], "bdb")
-
-        wallet.migratewallet()
-        info = wallet.getwalletinfo()
-        assert_equal(info["descriptors"], True)
-        assert_equal(info["format"], "sqlite")
-
-        assert os.path.isdir(wallet_path)
-        assert os.path.isfile(wallet_dat_path)
-
     def run_test(self):
         self.generate(self.nodes[0], 101)
 
@@ -517,8 +482,6 @@ class WalletMigrationTest(BitcoinTestFramework):
         self.test_encrypted()
         self.test_unloaded()
         self.test_unloaded_by_path()
-        self.test_default_wallet()
-        self.test_direct_file()
 
 if __name__ == '__main__':
     WalletMigrationTest().main()

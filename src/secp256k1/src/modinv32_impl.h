@@ -64,7 +64,7 @@ static void secp256k1_modinv32_normalize_30(secp256k1_modinv32_signed30 *r, int3
     const int32_t M30 = (int32_t)(UINT32_MAX >> 2);
     int32_t r0 = r->v[0], r1 = r->v[1], r2 = r->v[2], r3 = r->v[3], r4 = r->v[4],
             r5 = r->v[5], r6 = r->v[6], r7 = r->v[7], r8 = r->v[8];
-    volatile int32_t cond_add, cond_negate;
+    int32_t cond_add, cond_negate;
 
 #ifdef VERIFY
     /* Verify that all limbs are in range (-2^30,2^30). */
@@ -186,8 +186,7 @@ static int32_t secp256k1_modinv32_divsteps_30(int32_t zeta, uint32_t f0, uint32_
      * being inside [-2^31,2^31) means that casting to signed works correctly.
      */
     uint32_t u = 1, v = 0, q = 0, r = 1;
-    volatile uint32_t c1, c2;
-    uint32_t mask1, mask2, f = f0, g = g0, x, y, z;
+    uint32_t c1, c2, f = f0, g = g0, x, y, z;
     int i;
 
     for (i = 0; i < 30; ++i) {
@@ -196,25 +195,23 @@ static int32_t secp256k1_modinv32_divsteps_30(int32_t zeta, uint32_t f0, uint32_
         VERIFY_CHECK((q * f0 + r * g0) == g << i);
         /* Compute conditional masks for (zeta < 0) and for (g & 1). */
         c1 = zeta >> 31;
-        mask1 = c1;
-        c2 = g & 1;
-        mask2 = -c2;
+        c2 = -(g & 1);
         /* Compute x,y,z, conditionally negated versions of f,u,v. */
-        x = (f ^ mask1) - mask1;
-        y = (u ^ mask1) - mask1;
-        z = (v ^ mask1) - mask1;
+        x = (f ^ c1) - c1;
+        y = (u ^ c1) - c1;
+        z = (v ^ c1) - c1;
         /* Conditionally add x,y,z to g,q,r. */
-        g += x & mask2;
-        q += y & mask2;
-        r += z & mask2;
-        /* In what follows, mask1 is a condition mask for (zeta < 0) and (g & 1). */
-        mask1 &= mask2;
+        g += x & c2;
+        q += y & c2;
+        r += z & c2;
+        /* In what follows, c1 is a condition mask for (zeta < 0) and (g & 1). */
+        c1 &= c2;
         /* Conditionally change zeta into -zeta-2 or zeta-1. */
-        zeta = (zeta ^ mask1) - 1;
+        zeta = (zeta ^ c1) - 1;
         /* Conditionally add g,q,r to f,u,v. */
-        f += g & mask1;
-        u += q & mask1;
-        v += r & mask1;
+        f += g & c1;
+        u += q & c1;
+        v += r & c1;
         /* Shifts */
         g >>= 1;
         u <<= 1;

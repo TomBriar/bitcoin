@@ -97,8 +97,9 @@ static bool IsZMQAddressIPV6(const std::string &zmq_address)
     const size_t colon_index = zmq_address.rfind(':');
     if (tcp_index == 0 && colon_index != std::string::npos) {
         const std::string ip = zmq_address.substr(tcp_prefix.length(), colon_index - tcp_prefix.length());
-        const std::optional<CNetAddr> addr{LookupHost(ip, false)};
-        if (addr.has_value() && addr.value().IsIPv6()) return true;
+        CNetAddr addr;
+        LookupHost(ip, addr, false);
+        if (addr.IsIPv6()) return true;
     }
     return false;
 }

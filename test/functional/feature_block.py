@@ -14,6 +14,7 @@ from test_framework.blocktools import (
     get_legacy_sigopcount_block,
     MAX_BLOCK_SIGOPS,
 )
+from test_framework.key import ECKey
 from test_framework.messages import (
     CBlock,
     COIN,
@@ -54,7 +55,6 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
 )
-from test_framework.wallet_util import generate_keypair
 from data import invalid_txs
 
 
@@ -98,7 +98,9 @@ class FullBlockTest(BitcoinTestFramework):
         self.bootstrap_p2p()  # Add one p2p connection to the node
 
         self.block_heights = {}
-        self.coinbase_key, self.coinbase_pubkey = generate_keypair()
+        self.coinbase_key = ECKey()
+        self.coinbase_key.generate()
+        self.coinbase_pubkey = self.coinbase_key.get_pubkey().get_bytes()
         self.tip = None
         self.blocks = {}
         self.genesis_hash = int(self.nodes[0].getbestblockhash(), 16)

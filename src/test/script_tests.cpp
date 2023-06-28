@@ -5,7 +5,6 @@
 #include <test/data/script_tests.json.h>
 #include <test/data/bip341_wallet_vectors.json.h>
 
-#include <common/system.h>
 #include <core_io.h>
 #include <key.h>
 #include <rpc/util.h>
@@ -21,6 +20,7 @@
 #include <test/util/transaction_utils.h>
 #include <util/fs.h>
 #include <util/strencodings.h>
+#include <util/system.h>
 
 #if defined(HAVE_CONSENSUS_LIB)
 #include <script/bitcoinconsensus.h>

@@ -30,6 +30,7 @@
 #include <util/fs.h>
 #include <util/sock.h>
 #include <util/strencodings.h>
+#include <util/syscall_sandbox.h>
 #include <util/thread.h>
 #include <util/threadinterrupt.h>
 #include <util/trace.h>
@@ -129,10 +130,14 @@ uint16_t GetListenPort()
 {
     // If -bind= is provided with ":port" part, use that (first one if multiple are provided).
     for (const std::string& bind_arg : gArgs.GetArgs("-bind")) {
+        CService bind_addr;
         constexpr uint16_t dummy_port = 0;
 
-        const std::optional<CService> bind_addr{Lookup(bind_arg, dummy_port, /*fAllowLookup=*/false)};
-        if (bind_addr.has_value() && bind_addr->GetPort() != dummy_port) return bind_addr->GetPort();
+        if (Lookup(bind_arg, bind_addr, dummy_port, /*fAllowLookup=*/false)) {
+            if (bind_addr.GetPort() != dummy_port) {
+                return bind_addr.GetPort();
+            }
+        }
     }
 
     // Otherwise, if -whitebind= without NetPermissionFlags::NoBan is provided, use that
@@ -456,9 +461,9 @@ CNode* CConnman::ConnectNode(CAddress addrConnect, const char *pszDest, bool fCo
     const uint16_t default_port{pszDest != nullptr ? Params().GetDefaultPort(pszDest) :
                                                      Params().GetDefaultPort()};
     if (pszDest) {
-        const std::vector<CService> resolved{Lookup(pszDest, default_port, fNameLookup && !HaveNameProxy(), 256)};
-        if (!resolved.empty()) {
-            const CService& rnd{resolved[GetRand(resolved.size())]};
+        std::vector<CService> resolved;
+        if (Lookup(pszDest, resolved,  default_port, fNameLookup && !HaveNameProxy(), 256) && !resolved.empty()) {
+            const CService rnd{resolved[GetRand(resolved.size())]};
             addrConnect = CAddress{MaybeFlipIPv6toCJDNS(rnd), NODE_NONE};
             if (!addrConnect.IsValid()) {
                 LogPrint(BCLog::NET, "Resolver returned invalid address %s for %s\n", addrConnect.ToStringAddrPort(), pszDest);
@@ -1380,6 +1385,7 @@ void CConnman::ThreadSocketHandler()
 {
     AssertLockNotHeld(m_total_bytes_sent_mutex);
 
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::NET);
     while (!interruptNet)
     {
         DisconnectNodes();
@@ -1399,6 +1405,7 @@ void CConnman::WakeMessageHandler()
 
 void CConnman::ThreadDNSAddressSeed()
 {
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::INITIALIZATION_DNS_SEED);
     FastRandomContext rng;
     std::vector<std::string> seeds = Params().DNSSeeds();
     Shuffle(seeds.begin(), seeds.end(), rng);
@@ -1480,6 +1487,7 @@ void CConnman::ThreadDNSAddressSeed()
         if (HaveNameProxy()) {
             AddAddrFetch(seed);
         } else {
+            std::vector<CNetAddr> vIPs;
             std::vector<CAddress> vAdd;
             ServiceFlags requiredServiceBits = GetDesirableServiceFlags(NODE_NONE);
             std::string host = strprintf("x%x.%s", requiredServiceBits, seed);
@@ -1488,9 +1496,8 @@ void CConnman::ThreadDNSAddressSeed()
                 continue;
             }
             unsigned int nMaxIPs = 256; // Limits number of IPs learned from a DNS seed
-            const auto addresses{LookupHost(host, nMaxIPs, true)};
-            if (!addresses.empty()) {
-                for (const CNetAddr& ip : addresses) {
+            if (LookupHost(host, vIPs, nMaxIPs, true)) {
+                for (const CNetAddr& ip : vIPs) {
                     CAddress addr = CAddress(CService(ip, Params().GetDefaultPort()), requiredServiceBits);
                     addr.nTime = rng.rand_uniform_delay(Now<NodeSeconds>() - 3 * 24h, -4 * 24h); // use a random age between 3 and 7 days old
                     vAdd.push_back(addr);
@@ -1604,6 +1611,7 @@ std::unordered_set<Network> CConnman::GetReachableEmptyNetworks() const
 void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
 {
     AssertLockNotHeld(m_unused_i2p_sessions_mutex);
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::NET_OPEN_CONNECTION);
     FastRandomContext rng;
     // Connect to specific addresses
     if (!connect.empty())
@@ -1633,7 +1641,6 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
     auto next_extra_block_relay = GetExponentialRand(start, EXTRA_BLOCK_RELAY_ONLY_PEER_INTERVAL);
     const bool dnsseed = gArgs.GetBoolArg("-dnsseed", DEFAULT_DNSSEED);
     bool add_fixed_seeds = gArgs.GetBoolArg("-fixedseeds", DEFAULT_FIXEDSEEDS);
-    const bool use_seednodes{gArgs.IsArgSet("-seednode")};
 
     if (!add_fixed_seeds) {
         LogPrintf("Fixed seeds are disabled\n");
@@ -1663,12 +1670,12 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
                 LogPrintf("Adding fixed seeds as 60 seconds have passed and addrman is empty for at least one reachable network\n");
             }
 
-            // Perform cheap checks before locking a mutex.
-            else if (!dnsseed && !use_seednodes) {
-                LOCK(m_added_nodes_mutex);
-                if (m_added_nodes.empty()) {
+            // Checking !dnsseed is cheaper before locking 2 mutexes.
+            if (!add_fixed_seeds_now && !dnsseed) {
+                LOCK2(m_addr_fetches_mutex, m_added_nodes_mutex);
+                if (m_addr_fetches.empty() && m_added_nodes.empty()) {
                     add_fixed_seeds_now = true;
-                    LogPrintf("Adding fixed seeds as -dnsseed=0 (or IPv4/IPv6 connections are disabled via -onlynet) and neither -addnode nor -seednode are provided\n");
+                    LogPrintf("Adding fixed seeds as -dnsseed=0 (or IPv4/IPv6 connections are disabled via -onlynet), -addnode is not provided and all -seednode(s) attempted\n");
                 }
             }
 
@@ -1700,7 +1707,7 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
         int nOutboundFullRelay = 0;
         int nOutboundBlockRelay = 0;
         int outbound_privacy_network_peers = 0;
-        std::set<std::vector<unsigned char>> outbound_ipv46_peer_netgroups;
+        std::set<std::vector<unsigned char>> setConnected; // netgroups of our ipv4/ipv6 outbound peers
 
         {
             LOCK(m_nodes_mutex);
@@ -1722,7 +1729,7 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
                     case ConnectionType::MANUAL:
                     case ConnectionType::OUTBOUND_FULL_RELAY:
                     case ConnectionType::BLOCK_RELAY:
-                        const CAddress address{pnode->addr};
+                        CAddress address{pnode->addr};
                         if (address.IsTor() || address.IsI2P() || address.IsCJDNS()) {
                             // Since our addrman-groups for these networks are
                             // random, without relation to the route we
@@ -1733,7 +1740,7 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
                             // these networks.
                             ++outbound_privacy_network_peers;
                         } else {
-                            outbound_ipv46_peer_netgroups.insert(m_netgroupman.GetGroup(address));
+                            setConnected.insert(m_netgroupman.GetGroup(address));
                         }
                 } // no default case, so the compiler can warn about missing cases
             }
@@ -1808,7 +1815,7 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
                 m_anchors.pop_back();
                 if (!addr.IsValid() || IsLocal(addr) || !IsReachable(addr) ||
                     !HasAllDesirableServiceFlags(addr.nServices) ||
-                    outbound_ipv46_peer_netgroups.count(m_netgroupman.GetGroup(addr))) continue;
+                    setConnected.count(m_netgroupman.GetGroup(addr))) continue;
                 addrConnect = addr;
                 LogPrint(BCLog::NET, "Trying to make an anchor connection to %s\n", addrConnect.ToStringAddrPort());
                 break;
@@ -1848,8 +1855,8 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
                 std::tie(addr, addr_last_try) = addrman.Select();
             }
 
-            // Require outbound IPv4/IPv6 connections, other than feelers, to be to distinct network groups
-            if (!fFeeler && outbound_ipv46_peer_netgroups.count(m_netgroupman.GetGroup(addr))) {
+            // Require outbound connections, other than feelers, to be to distinct network groups
+            if (!fFeeler && setConnected.count(m_netgroupman.GetGroup(addr))) {
                 break;
             }
 
@@ -1895,9 +1902,8 @@ void CConnman::ThreadOpenConnections(const std::vector<std::string> connect)
             // Record addrman failure attempts when node has at least 2 persistent outbound connections to peers with
             // different netgroups in ipv4/ipv6 networks + all peers in Tor/I2P/CJDNS networks.
             // Don't record addrman failure attempts when node is offline. This can be identified since all local
-            // network connections (if any) belong in the same netgroup, and the size of `outbound_ipv46_peer_netgroups` would only be 1.
-            const bool count_failures{((int)outbound_ipv46_peer_netgroups.size() + outbound_privacy_network_peers) >= std::min(nMaxConnections - 1, 2)};
-            OpenNetworkConnection(addrConnect, count_failures, &grant, /*strDest=*/nullptr, conn_type);
+            // network connections(if any) belong in the same netgroup and size of setConnected would only be 1.
+            OpenNetworkConnection(addrConnect, (int)setConnected.size() + outbound_privacy_network_peers >= std::min(nMaxConnections - 1, 2), &grant, nullptr, conn_type);
         }
     }
 }
@@ -1972,6 +1978,7 @@ std::vector<AddedNodeInfo> CConnman::GetAddedNodeInfo() const
 void CConnman::ThreadOpenAddedConnections()
 {
     AssertLockNotHeld(m_unused_i2p_sessions_mutex);
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::NET_ADD_CONNECTION);
     while (true)
     {
         CSemaphoreGrant grant(*semAddnode);
@@ -2040,6 +2047,7 @@ void CConnman::ThreadMessageHandler()
 {
     LOCK(NetEventsInterface::g_msgproc_mutex);
 
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::MESSAGE_HANDLER);
     while (!flagInterruptMsgProc)
     {
         bool fMoreWork = false;
@@ -2193,11 +2201,14 @@ void Discover()
     char pszHostName[256] = "";
     if (gethostname(pszHostName, sizeof(pszHostName)) != SOCKET_ERROR)
     {
-        const std::vector<CNetAddr> addresses{LookupHost(pszHostName, 0, true)};
-        for (const CNetAddr& addr : addresses)
+        std::vector<CNetAddr> vaddr;
+        if (LookupHost(pszHostName, vaddr, 0, true))
         {
-            if (AddLocal(addr, LOCAL_IF))
-                LogPrintf("%s: %s - %s\n", __func__, pszHostName, addr.ToStringAddr());
+            for (const CNetAddr &addr : vaddr)
+            {
+                if (AddLocal(addr, LOCAL_IF))
+                    LogPrintf("%s: %s - %s\n", __func__, pszHostName, addr.ToStringAddr());
+            }
         }
     }
 #elif (HAVE_DECL_GETIFADDRS && HAVE_DECL_FREEIFADDRS)
@@ -2933,13 +2944,13 @@ void CaptureMessageToFile(const CAddress& addr,
     AutoFile f{fsbridge::fopen(path, "ab")};
 
     ser_writedata64(f, now.count());
-    f << Span{msg_type};
+    f.write(MakeByteSpan(msg_type));
     for (auto i = msg_type.length(); i < CMessageHeader::COMMAND_SIZE; ++i) {
         f << uint8_t{'\0'};
     }
     uint32_t size = data.size();
     ser_writedata32(f, size);
-    f << data;
+    f.write(AsBytes(data));
 }
 
 std::function<void(const CAddress& addr,

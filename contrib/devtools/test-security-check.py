@@ -5,7 +5,7 @@
 '''
 Test script for security-check.py
 '''
-import lief
+import lief #type:ignore
 import os
 import subprocess
 from typing import List
@@ -120,13 +120,13 @@ class TestSecurityChecks(unittest.TestCase):
 
         if arch == lief.ARCHITECTURES.X86:
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-no_pie','-Wl,-flat_namespace','-Wl,-allow_stack_execute','-fno-stack-protector']),
-                (1, executable+': failed NOUNDEFS Canary PIE NX CONTROL_FLOW'))
+                (1, executable+': failed NOUNDEFS LAZY_BINDINGS Canary PIE NX CONTROL_FLOW'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-no_pie','-Wl,-flat_namespace','-Wl,-allow_stack_execute','-fstack-protector-all']),
-                (1, executable+': failed NOUNDEFS PIE NX CONTROL_FLOW'))
+                (1, executable+': failed NOUNDEFS LAZY_BINDINGS PIE NX CONTROL_FLOW'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-no_pie','-Wl,-flat_namespace','-fstack-protector-all']),
-                (1, executable+': failed NOUNDEFS PIE CONTROL_FLOW'))
+                (1, executable+': failed NOUNDEFS LAZY_BINDINGS PIE CONTROL_FLOW'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-no_pie','-fstack-protector-all']),
-                (1, executable+': failed PIE CONTROL_FLOW'))
+                (1, executable+': failed LAZY_BINDINGS PIE CONTROL_FLOW'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-no_pie','-Wl,-bind_at_load','-fstack-protector-all']),
                 (1, executable+': failed PIE CONTROL_FLOW'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-no_pie','-Wl,-bind_at_load','-fstack-protector-all', '-fcf-protection=full']),
@@ -136,9 +136,11 @@ class TestSecurityChecks(unittest.TestCase):
         else:
             # arm64 darwin doesn't support non-PIE binaries, control flow or executable stacks
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-flat_namespace','-fno-stack-protector']),
-                (1, executable+': failed NOUNDEFS Canary'))
+                (1, executable+': failed NOUNDEFS LAZY_BINDINGS Canary'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-flat_namespace','-fstack-protector-all']),
-                (1, executable+': failed NOUNDEFS'))
+                (1, executable+': failed NOUNDEFS LAZY_BINDINGS'))
+            self.assertEqual(call_security_check(cc, source, executable, ['-fstack-protector-all']),
+                (1, executable+': failed LAZY_BINDINGS'))
             self.assertEqual(call_security_check(cc, source, executable, ['-Wl,-bind_at_load','-fstack-protector-all']),
                 (0, ''))
 

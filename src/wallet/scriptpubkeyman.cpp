@@ -710,8 +710,6 @@ void LegacyScriptPubKeyMan::UpdateTimeFirstKey(int64_t nCreateTime)
     } else if (!nTimeFirstKey || nCreateTime < nTimeFirstKey) {
         nTimeFirstKey = nCreateTime;
     }
-
-    NotifyFirstKeyTimeChanged(this, nTimeFirstKey);
 }
 
 bool LegacyScriptPubKeyMan::LoadKey(const CKey& key, const CPubKey &pubkey)
@@ -757,12 +755,12 @@ bool LegacyScriptPubKeyMan::AddKeyPubKeyWithDB(WalletBatch& batch, const CKey& s
         RemoveWatchOnly(script);
     }
 
-    m_storage.UnsetBlankWalletFlag(batch);
     if (!m_storage.HasEncryptionKeys()) {
         return batch.WriteKey(pubkey,
                                                  secret.GetPrivKey(),
                                                  mapKeyMetadata[pubkey.GetID()]);
     }
+    m_storage.UnsetBlankWalletFlag(batch);
     return true;
 }
 
@@ -2738,8 +2736,6 @@ void DescriptorScriptPubKeyMan::UpdateWalletDescriptor(WalletDescriptor& descrip
     m_map_script_pub_keys.clear();
     m_max_cached_index = -1;
     m_wallet_descriptor = descriptor;
-
-    NotifyFirstKeyTimeChanged(this, m_wallet_descriptor.creation_time);
 }
 
 bool DescriptorScriptPubKeyMan::CanUpdateToWalletDescriptor(const WalletDescriptor& descriptor, std::string& error)

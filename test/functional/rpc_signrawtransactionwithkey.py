@@ -11,6 +11,7 @@ from test_framework.address import (
     address_to_scriptpubkey,
     script_to_p2sh,
 )
+from test_framework.key import ECKey
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
@@ -22,15 +23,15 @@ from test_framework.script_util import (
     script_to_p2sh_p2wsh_script,
     script_to_p2wsh_script,
 )
-from test_framework.wallet import (
-    getnewdestination,
-)
 from test_framework.wallet_util import (
-    generate_keypair,
+    bytes_to_wif,
 )
 
 from decimal import (
     Decimal,
+)
+from test_framework.wallet import (
+    getnewdestination,
 )
 
 
@@ -79,8 +80,11 @@ class SignRawTransactionWithKeyTest(BitcoinTestFramework):
     def witness_script_test(self):
         self.log.info("Test signing transaction to P2SH-P2WSH addresses without wallet")
         # Create a new P2SH-P2WSH 1-of-1 multisig address:
-        embedded_privkey, embedded_pubkey = generate_keypair(wif=True)
-        p2sh_p2wsh_address = self.nodes[1].createmultisig(1, [embedded_pubkey.hex()], "p2sh-segwit")
+        eckey = ECKey()
+        eckey.generate()
+        embedded_privkey = bytes_to_wif(eckey.get_bytes())
+        embedded_pubkey = eckey.get_pubkey().get_bytes().hex()
+        p2sh_p2wsh_address = self.nodes[1].createmultisig(1, [embedded_pubkey], "p2sh-segwit")
         # send transaction to P2SH-P2WSH 1-of-1 multisig address
         self.block_hash = self.generate(self.nodes[0], COINBASE_MATURITY + 1)
         self.blk_idx = 0
@@ -105,7 +109,10 @@ class SignRawTransactionWithKeyTest(BitcoinTestFramework):
 
     def verify_txn_with_witness_script(self, tx_type):
         self.log.info("Test with a {} script as the witnessScript".format(tx_type))
-        embedded_privkey, embedded_pubkey = generate_keypair(wif=True)
+        eckey = ECKey()
+        eckey.generate()
+        embedded_privkey = bytes_to_wif(eckey.get_bytes())
+        embedded_pubkey = eckey.get_pubkey().get_bytes().hex()
         witness_script = {
             'P2PKH': key_to_p2pkh_script(embedded_pubkey).hex(),
             'P2PK': key_to_p2pk_script(embedded_pubkey).hex()

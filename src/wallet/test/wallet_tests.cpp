@@ -42,6 +42,26 @@ static_assert(WALLET_INCREMENTAL_RELAY_FEE >= DEFAULT_INCREMENTAL_RELAY_FEE, "wa
 
 BOOST_FIXTURE_TEST_SUITE(wallet_tests, WalletTestingSetup)
 
+static std::shared_ptr<CWallet> TestLoadWallet(WalletContext& context)
+{
+    DatabaseOptions options;
+    options.create_flags = WALLET_FLAG_DESCRIPTORS;
+    DatabaseStatus status;
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    auto database = MakeWalletDatabase("", options, status, error);
+    auto wallet = CWallet::Create(context, "", std::move(database), options.create_flags, error, warnings);
+    NotifyWalletLoaded(context, wallet);
+    return wallet;
+}
+
+static void TestUnloadWallet(std::shared_ptr<CWallet>&& wallet)
+{
+    SyncWithValidationInterfaceQueue();
+    wallet->m_chain_notifications_handler.reset();
+    UnloadWallet(std::move(wallet));
+}
+
 static CMutableTransaction TestSimpleSpend(const CTransaction& from, uint32_t index, const CKey& key, const CScript& pubkey)
 {
     CMutableTransaction mtx;
@@ -405,6 +425,15 @@ BOOST_AUTO_TEST_CASE(ComputeTimeSmart)
     // newest entry that is no more than 300 seconds ahead of the clock time.
     BOOST_CHECK_EQUAL(AddTx(*m_node.chainman, m_wallet, 5, 50, 600), 300);
 }
+
+static const DatabaseFormat DATABASE_FORMATS[] = {
+#ifdef USE_SQLITE
+    DatabaseFormat::SQLITE,
+#endif
+#ifdef USE_BDB
+    DatabaseFormat::BERKELEY,
+#endif
+};
 
 void TestLoadWallet(const std::string& name, DatabaseFormat format, std::function<void(std::shared_ptr<CWallet>)> f)
 {
@@ -825,11 +854,10 @@ BOOST_FIXTURE_TEST_CASE(CreateWallet, TestChain100Setup)
 
     // Reload wallet and make sure new transactions are detected despite events
     // being blocked
-    // Loading will also ask for current mempool transactions
     wallet = TestLoadWallet(context);
     BOOST_CHECK(rescan_completed);
-    // AddToWallet events for block_tx and mempool_tx (x2)
-    BOOST_CHECK_EQUAL(addtx_count, 3);
+    // AddToWallet events for block_tx and mempool_tx
+    BOOST_CHECK_EQUAL(addtx_count, 2);
     {
         LOCK(wallet->cs_wallet);
         BOOST_CHECK_EQUAL(wallet->mapWallet.count(block_tx.GetHash()), 1U);
@@ -843,7 +871,7 @@ BOOST_FIXTURE_TEST_CASE(CreateWallet, TestChain100Setup)
     SyncWithValidationInterfaceQueue();
     // AddToWallet events for block_tx and mempool_tx events are counted a
     // second time as the notification queue is processed
-    BOOST_CHECK_EQUAL(addtx_count, 5);
+    BOOST_CHECK_EQUAL(addtx_count, 4);
 
 
     TestUnloadWallet(std::move(wallet));
@@ -866,9 +894,7 @@ BOOST_FIXTURE_TEST_CASE(CreateWallet, TestChain100Setup)
             SyncWithValidationInterfaceQueue();
         });
     wallet = TestLoadWallet(context);
-    // Since mempool transactions are requested at the end of loading, there will
-    // be 2 additional AddToWallet calls, one from the previous test, and a duplicate for mempool_tx
-    BOOST_CHECK_EQUAL(addtx_count, 2 + 2);
+    BOOST_CHECK_EQUAL(addtx_count, 2);
     {
         LOCK(wallet->cs_wallet);
         BOOST_CHECK_EQUAL(wallet->mapWallet.count(block_tx.GetHash()), 1U);
@@ -938,10 +964,11 @@ BOOST_FIXTURE_TEST_CASE(wallet_sync_tx_invalid_state_test, TestingSetup)
     }
 
     // Add tx to wallet
-    const auto op_dest{*Assert(wallet.GetNewDestination(OutputType::BECH32M, ""))};
+    const auto& op_dest = wallet.GetNewDestination(OutputType::BECH32M, "");
+    BOOST_ASSERT(op_dest);
 
     CMutableTransaction mtx;
-    mtx.vout.push_back({COIN, GetScriptForDestination(op_dest)});
+    mtx.vout.push_back({COIN, GetScriptForDestination(*op_dest)});
     mtx.vin.push_back(CTxIn(g_insecure_rand_ctx.rand256(), 0));
     const auto& tx_id_to_spend = wallet.AddToWallet(MakeTransactionRef(mtx), TxStateInMempool{})->GetHash();
 

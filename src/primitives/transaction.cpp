@@ -5,6 +5,7 @@
 
 #include <primitives/transaction.h>
 
+
 #include <consensus/amount.h>
 #include <hash.h>
 #include <script/script.h>
@@ -16,6 +17,9 @@
 
 #include <cassert>
 #include <stdexcept>
+
+#include <cmath>
+
 
 std::string COutPoint::ToString() const
 {
@@ -44,7 +48,7 @@ std::string CTxIn::ToString() const
     if (prevout.IsNull())
         str += strprintf(", coinbase %s", HexStr(scriptSig));
     else
-        str += strprintf(", scriptSig=%s", HexStr(scriptSig).substr(0, 24));
+        str += strprintf(", scriptSig=%s", HexStr(scriptSig));
     if (nSequence != SEQUENCE_FINAL)
         str += strprintf(", nSequence=%u", nSequence);
     str += ")";
@@ -59,7 +63,7 @@ CTxOut::CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn)
 
 std::string CTxOut::ToString() const
 {
-    return strprintf("CTxOut(nValue=%d.%08d, scriptPubKey=%s)", nValue / COIN, nValue % COIN, HexStr(scriptPubKey).substr(0, 30));
+    return strprintf("CTxOut(nValue=%d.%08d, scriptPubKey=%s)", nValue / COIN, nValue % COIN, HexStr(scriptPubKey));
 }
 
 CMutableTransaction::CMutableTransaction() : nVersion(CTransaction::CURRENT_VERSION), nLockTime(0) {}

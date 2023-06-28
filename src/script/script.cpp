@@ -150,6 +150,25 @@ std::string GetOpName(opcodetype opcode)
     }
 }
 
+////CScript::CScript(const std::vector<unsigned char>& payload, scripttype scriptType) {
+////	switch (scriptType) {
+////		case scripttype::P2PK : if (payload.size() == 0x41) { (*this) << 0x41 << payload << 0xac;}
+////			break;
+////		case scripttype::P2SH : if (payload.size() == 0x14) { (*this) << 0xa9 << 0x14 << payload << 0x87;}
+////			break;
+////		case scripttype::P2PKH : if (payload.size() == 0x14) { (*this) << 0x76 << 0xa9 << 0x14 << payload << 0x88 << 0xac;}
+////			break;
+////		case scripttype::P2WSH : if (payload.size() == 0x14) { (*this) << 0x00 << 0x14 << payload;}
+////			break;
+////		case scripttype::P2WPKH : if (payload.size() == 0x32) { (*this) << 0x00 << 0x20 << payload;}
+////			break;
+////		case scripttype::P2TR : if (payload.size() == 0x32) { (*this) << 0x51 << 0x20 << payload;}
+////			break;
+////		default : { (*this) << payload;}
+////			break;
+////	}
+////}
+
 unsigned int CScript::GetSigOpCount(bool fAccurate) const
 {
     unsigned int n = 0;
@@ -198,6 +217,14 @@ unsigned int CScript::GetSigOpCount(const CScript& scriptSig) const
     return subscript.GetSigOpCount(true);
 }
 
+bool CScript::IsPayToPublicKey() const
+{
+    // Test for pay-to-public-key CScripts:
+    return (this->size() == 23 &&
+            (*this)[0] == 41 &&
+            (*this)[1] == OP_EQUALVERIFY);
+}
+
 bool CScript::IsPayToScriptHash() const
 {
     // Extra-fast test for pay-to-script-hash CScripts:
@@ -207,6 +234,18 @@ bool CScript::IsPayToScriptHash() const
             (*this)[22] == OP_EQUAL);
 }
 
+bool CScript::IsPayToPublicKeyHash() const
+{
+    // Test for pay-to-public-key-hash CScripts:
+    return (this->size() == 25 &&
+            (*this)[0] == OP_DUP &&
+            (*this)[1] == OP_HASH160 &&
+            (*this)[2] == 0x14 &&
+            (*this)[23] == OP_EQUALVERIFY &&
+            (*this)[24] == OP_CHECKSIG);
+}
+
+
 bool CScript::IsPayToWitnessScriptHash() const
 {
     // Extra-fast test for pay-to-witness-script-hash CScripts:
@@ -214,6 +253,42 @@ bool CScript::IsPayToWitnessScriptHash() const
             (*this)[0] == OP_0 &&
             (*this)[1] == 0x20);
 }
+
+bool CScript::IsPayToWitnessPublicKeyHash() const
+{
+    // Test for pay-to-witness-public-key-hash CScripts:
+    return (this->size() == 22 &&
+            (*this)[0] == OP_0 &&
+            (*this)[1] == 0x14);
+}
+
+
+bool CScript::IsPayToTaproot() const
+{
+    // Test for pay-to-taproot CScripts:
+    return (this->size() == 34 &&
+            (*this)[0] == OP_1 &&
+            (*this)[1] == 0x20);
+}
+
+////scripttype CScript::GetScriptType() const 
+////{
+////	if (this->IsPayToPublicKey()) {
+////		return scripttype::P2PK;
+////	} else if (this->IsPayToScriptHash()) {
+////		return scripttype::P2SH;
+////	} else if (this->IsPayToPublicKeyHash()) {
+////		return scripttype::P2PKH;
+////	} else if (this->IsPayToWitnessScriptHash()) {
+////		return scripttype::P2WSH;
+////	} else if (this->IsPayToWitnessPublicKeyHash()) {
+////		return scripttype::P2WPKH;
+////	} else if (this->IsPayToTaproot()) {
+////		return scripttype::P2TR;
+////	}
+////	return scripttype::Custom;
+////}
+
 
 // A witness program is any valid CScript that consists of a 1-byte push opcode
 // followed by a data push between 2 and 40 bytes.

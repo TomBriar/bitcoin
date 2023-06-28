@@ -207,7 +207,7 @@ ChainstateLoadResult LoadChainstate(ChainstateManager& chainman, const CacheSize
     } else if (snapshot_completion == SnapshotCompletionResult::SUCCESS) {
         LogPrintf("[snapshot] cleaning up unneeded background chainstate, then reinitializing\n");
         if (!chainman.ValidatedSnapshotCleanup()) {
-            return {ChainstateLoadStatus::FAILURE_FATAL, Untranslated("Background chainstate cleanup failed unexpectedly.")};
+            AbortNode("Background chainstate cleanup failed unexpectedly.");
         }
 
         // Because ValidatedSnapshotCleanup() has torn down chainstates with
@@ -253,7 +253,7 @@ ChainstateLoadResult VerifyLoadedChainstate(ChainstateManager& chainman, const C
                                                          "Only rebuild the block database if you are sure that your computer's date and time are correct")};
             }
 
-            VerifyDBResult result = CVerifyDB(chainman.GetNotifications()).VerifyDB(
+            VerifyDBResult result = CVerifyDB().VerifyDB(
                 *chainstate, chainman.GetConsensus(), chainstate->CoinsDB(),
                 options.check_level,
                 options.check_blocks);

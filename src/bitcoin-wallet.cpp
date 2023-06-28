@@ -10,7 +10,6 @@
 #include <chainparamsbase.h>
 #include <clientversion.h>
 #include <common/args.h>
-#include <common/system.h>
 #include <common/url.h>
 #include <compat/compat.h>
 #include <interfaces/init.h>
@@ -19,6 +18,7 @@
 #include <pubkey.h>
 #include <tinyformat.h>
 #include <util/exception.h>
+#include <util/system.h>
 #include <util/translation.h>
 #include <wallet/wallettool.h>
 

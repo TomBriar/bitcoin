@@ -31,7 +31,6 @@
 #include <util/check.h>
 #include <util/fs.h>
 #include <util/hasher.h>
-#include <util/result.h>
 #include <util/translation.h>
 #include <versionbits.h>
 
@@ -43,7 +42,6 @@
 #include <stdint.h>
 #include <string>
 #include <thread>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -67,6 +65,8 @@ struct Params;
 static const int MAX_SCRIPTCHECK_THREADS = 15;
 /** -par default (number of script-checking threads, 0 = auto) */
 static const int DEFAULT_SCRIPTCHECK_THREADS = 0;
+/** Default for -stopatheight */
+static const int DEFAULT_STOPATHEIGHT = 0;
 /** Block files containing a block-height within MIN_BLOCKS_TO_KEEP of ActiveChain().Tip() will not be pruned. */
 static const unsigned int MIN_BLOCKS_TO_KEEP = 288;
 static const signed int DEFAULT_CHECKBLOCKS = 6;
@@ -331,11 +331,6 @@ public:
     ScriptError GetScriptError() const { return error; }
 };
 
-// CScriptCheck is used a lot in std::vector, make sure that's efficient
-static_assert(std::is_nothrow_move_assignable_v<CScriptCheck>);
-static_assert(std::is_nothrow_move_constructible_v<CScriptCheck>);
-static_assert(std::is_nothrow_destructible_v<CScriptCheck>);
-
 /** Initializes the script-execution cache */
 [[nodiscard]] bool InitScriptExecutionCache(size_t max_size_bytes);
 
@@ -369,13 +364,9 @@ enum class VerifyDBResult {
 };
 
 /** RAII wrapper for VerifyDB: Verify consistency of the block and coin databases */
-class CVerifyDB
-{
-private:
-    kernel::Notifications& m_notifications;
-
+class CVerifyDB {
 public:
-    explicit CVerifyDB(kernel::Notifications& notifications);
+    CVerifyDB();
     ~CVerifyDB();
     [[nodiscard]] VerifyDBResult VerifyDB(
         Chainstate& chainstate,
@@ -817,7 +808,7 @@ private:
      * In case of an invalid snapshot, rename the coins leveldb directory so
      * that it can be examined for issue diagnosis.
      */
-    [[nodiscard]] util::Result<void> InvalidateCoinsDBOnDisk() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
+    void InvalidateCoinsDBOnDisk() EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
     friend ChainstateManager;
 };
@@ -945,8 +936,6 @@ private:
     //! nullopt.
     std::optional<int> GetSnapshotBaseHeight() const EXCLUSIVE_LOCKS_REQUIRED(::cs_main);
 
-    std::array<ThresholdConditionCache, VERSIONBITS_NUM_BITS> m_warningcache GUARDED_BY(::cs_main);
-
     //! Return true if a chainstate is considered usable.
     //!
     //! This is false when a background validation chainstate has completed its
@@ -966,8 +955,6 @@ public:
     bool ShouldCheckBlockIndex() const { return *Assert(m_options.check_block_index); }
     const arith_uint256& MinimumChainWork() const { return *Assert(m_options.minimum_chain_work); }
     const uint256& AssumedValidBlock() const { return *Assert(m_options.assumed_valid_block); }
-    kernel::Notifications& GetNotifications() const { return m_options.notifications; };
-    int StopAtHeight() const { return m_options.stop_at_height; };
 
     /**
      * Alias for ::cs_main.

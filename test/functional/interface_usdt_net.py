@@ -116,10 +116,13 @@ class NetTracepointTest(BitcoinTestFramework):
                          fn_name="trace_outbound_message")
         bpf = BPF(text=net_tracepoints_program, usdt_contexts=[ctx], debug=0)
 
+        # The handle_* function is a ctypes callback function called from C. When
+        # we assert in the handle_* function, the AssertError doesn't propagate
+        # back to Python. The exception is ignored. We manually count and assert
+        # that the handle_* functions succeeded.
         EXPECTED_INOUTBOUND_VERSION_MSG = 1
         checked_inbound_version_msg = 0
         checked_outbound_version_msg = 0
-        events = []
 
         def check_p2p_message(event, inbound):
             nonlocal checked_inbound_version_msg, checked_outbound_version_msg
@@ -139,13 +142,12 @@ class NetTracepointTest(BitcoinTestFramework):
                     checked_outbound_version_msg += 1
 
         def handle_inbound(_, data, __):
-            nonlocal events
             event = ctypes.cast(data, ctypes.POINTER(P2PMessage)).contents
-            events.append((event, True))
+            check_p2p_message(event, True)
 
         def handle_outbound(_, data, __):
             event = ctypes.cast(data, ctypes.POINTER(P2PMessage)).contents
-            events.append((event, False))
+            check_p2p_message(event, False)
 
         bpf["inbound_messages"].open_perf_buffer(handle_inbound)
         bpf["outbound_messages"].open_perf_buffer(handle_outbound)
@@ -156,14 +158,11 @@ class NetTracepointTest(BitcoinTestFramework):
         bpf.perf_buffer_poll(timeout=200)
 
         self.log.info(
-            "check receipt and content of in- and outbound version messages")
-        for event, inbound in events:
-            check_p2p_message(event, inbound)
+            "check that we got both an inbound and outbound version message")
         assert_equal(EXPECTED_INOUTBOUND_VERSION_MSG,
                      checked_inbound_version_msg)
         assert_equal(EXPECTED_INOUTBOUND_VERSION_MSG,
                      checked_outbound_version_msg)
-
 
         bpf.cleanup()
 

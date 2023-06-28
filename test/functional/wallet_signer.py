@@ -45,6 +45,9 @@ class WalletSignerTest(BitcoinTestFramework):
 
     def set_test_params(self):
         self.num_nodes = 2
+        # The experimental syscall sandbox feature (-sandbox) is not compatible with -signer (which
+        # invokes execve).
+        self.disable_syscall_sandbox = True
 
         self.extra_args = [
             [],
@@ -208,13 +211,13 @@ class WalletSignerTest(BitcoinTestFramework):
         self.log.info('Test send using hww1')
 
         # Don't broadcast transaction yet so the RPC returns the raw hex
-        res = hww.send(outputs={dest:0.5},add_to_wallet=False)
+        res = hww.send(outputs={dest:0.5},options={"add_to_wallet": False})
         assert res["complete"]
         assert_equal(res["hex"], mock_tx)
 
         self.log.info('Test sendall using hww1')
 
-        res = hww.sendall(recipients=[{dest:0.5}, hww.getrawchangeaddress()], add_to_wallet=False)
+        res = hww.sendall(recipients=[{dest:0.5}, hww.getrawchangeaddress()],options={"add_to_wallet": False})
         assert res["complete"]
         assert_equal(res["hex"], mock_tx)
         # Broadcast transaction so we can bump the fee

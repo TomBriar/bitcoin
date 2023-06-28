@@ -10,6 +10,7 @@ Test the following RPCs:
    - signrawtransactionwithwallet
    - sendrawtransaction
    - decoderawtransaction
+   - compressrawtransaction
 """
 
 from collections import OrderedDict
@@ -90,6 +91,7 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.sendrawtransaction_tests()
         self.sendrawtransaction_testmempoolaccept_tests()
         self.decoderawtransaction_tests()
+        self.compressrawtransaction_tests()
         self.transaction_version_number_tests()
         if self.is_specified_wallet_compiled() and not self.options.descriptors:
             self.import_deterministic_coinbase_privkeys()
@@ -218,7 +220,6 @@ class RawTransactionsTest(BitcoinTestFramework):
             missing_fields = set(fields).difference(gottx.keys())
             if missing_fields:
                 raise AssertionError(f"fields {', '.join(missing_fields)} are not in transaction")
-
             assert len(gottx['vin']) > 0
             if v == 1:
                 assert 'fee' not in gottx
@@ -450,6 +451,21 @@ class RawTransactionsTest(BitcoinTestFramework):
         assert_raises_rpc_error(-22, 'TX decode failed', self.nodes[0].decoderawtransaction, encrawtx, False)  # fails to decode as non-witness transaction
         assert_equal(decrawtx, decrawtx_wit)  # the witness interpretation should be chosen
         assert_equal(decrawtx['vin'][0]['coinbase'], coinbase)
+
+    def compressrawtransaction_tests(self):
+        self.log.info("Test compressrawtransaction")
+        self.wallet.send_self_transfer(from_node=self.nodes[0])["hex"]
+        self.generate(self.nodes[0], 1)
+        tx = self.wallet.send_self_transfer(from_node=self.nodes[0])["hex"]
+        self.generate(self.nodes[0], 1)
+        self.log.info("test = "+tx)
+        # witness transaction
+        # tx = "010000000001010000000000000072c1a6a246ae63f74f931e8365e15a089c68d61900000000000000000000ffffffff0100e1f50500000000000102616100000000"
+        compressed_transaction = self.nodes[0].compressrawtransaction(tx)
+        self.log.info("Compressed_Transaction =	"+compressed_transaction)
+        # decompressed_transaction = self.node[0].decompressrawtransaction(compressed_transaction)
+        # self.log.info("Decompressed_Transaction = "+decompressed_transaction)
+        # assert_equal(tx, decompressed_transaction)
 
     def transaction_version_number_tests(self):
         self.log.info("Test transaction version numbers")

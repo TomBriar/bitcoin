@@ -129,10 +129,14 @@ CTransactionRef GetTransaction(const CBlockIndex* const block_index, const CTxMe
         if (ptx) return ptx;
     }
     if (g_txindex) {
+		std::cout << "g_txindex found" << std::endl;
         CTransactionRef tx;
         uint256 block_hash;
+		std::cout << "g_txindex seach =	" << hash.GetHex() << std::endl;
         if (g_txindex->FindTx(hash, block_hash, tx)) {
+			std::cout << "g_txindex tx found " << std::endl;
             if (!block_index || block_index->GetBlockHash() == block_hash) {
+				std::cout << "done" << std::endl;
                 // Don't return the transaction if the provided block hash doesn't match.
                 // The case where a transaction appears in multiple blocks (e.g. reorgs or
                 // BIP30) is handled by the block lookup below.

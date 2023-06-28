@@ -668,15 +668,14 @@ void BerkeleyDatabase::ReloadDbEnv()
     env->ReloadDbEnv();
 }
 
-BerkeleyCursor::BerkeleyCursor(BerkeleyDatabase& database, const BerkeleyBatch& batch, Span<const std::byte> prefix)
-    : m_key_prefix(prefix.begin(), prefix.end())
+BerkeleyCursor::BerkeleyCursor(BerkeleyDatabase& database, BerkeleyBatch* batch)
 {
     if (!database.m_db.get()) {
         throw std::runtime_error(STR_INTERNAL_BUG("BerkeleyDatabase does not exist"));
     }
     // Transaction argument to cursor is only needed when using the cursor to
     // write to the database. Read-only cursors do not need a txn pointer.
-    int ret = database.m_db->cursor(batch.txn(), &m_cursor, 0);
+    int ret = database.m_db->cursor(batch ? batch->txn() : nullptr, &m_cursor, 0);
     if (ret != 0) {
         throw std::runtime_error(STR_INTERNAL_BUG(strprintf("BDB Cursor could not be created. Returned %d", ret)));
     }
@@ -686,30 +685,19 @@ DatabaseCursor::Status BerkeleyCursor::Next(DataStream& ssKey, DataStream& ssVal
 {
     if (m_cursor == nullptr) return Status::FAIL;
     // Read at cursor
-    SafeDbt datKey(m_key_prefix.data(), m_key_prefix.size());
+    SafeDbt datKey;
     SafeDbt datValue;
-    int ret = -1;
-    if (m_first && !m_key_prefix.empty()) {
-        ret = m_cursor->get(datKey, datValue, DB_SET_RANGE);
-    } else {
-        ret = m_cursor->get(datKey, datValue, DB_NEXT);
-    }
-    m_first = false;
+    int ret = m_cursor->get(datKey, datValue, DB_NEXT);
     if (ret == DB_NOTFOUND) {
         return Status::DONE;
     }
-    if (ret != 0) {
+    if (ret != 0 || datKey.get_data() == nullptr || datValue.get_data() == nullptr) {
         return Status::FAIL;
-    }
-
-    Span<const std::byte> raw_key = {AsBytePtr(datKey.get_data()), datKey.get_size()};
-    if (!m_key_prefix.empty() && std::mismatch(raw_key.begin(), raw_key.end(), m_key_prefix.begin(), m_key_prefix.end()).second != m_key_prefix.end()) {
-        return Status::DONE;
     }
 
     // Convert to streams
     ssKey.clear();
-    ssKey.write(raw_key);
+    ssKey.write({AsBytePtr(datKey.get_data()), datKey.get_size()});
     ssValue.clear();
     ssValue.write({AsBytePtr(datValue.get_data()), datValue.get_size()});
     return Status::MORE;
@@ -725,13 +713,7 @@ BerkeleyCursor::~BerkeleyCursor()
 std::unique_ptr<DatabaseCursor> BerkeleyBatch::GetNewCursor()
 {
     if (!pdb) return nullptr;
-    return std::make_unique<BerkeleyCursor>(m_database, *this);
-}
-
-std::unique_ptr<DatabaseCursor> BerkeleyBatch::GetNewPrefixCursor(Span<const std::byte> prefix)
-{
-    if (!pdb) return nullptr;
-    return std::make_unique<BerkeleyCursor>(m_database, *this, prefix);
+    return std::make_unique<BerkeleyCursor>(m_database);
 }
 
 bool BerkeleyBatch::TxnBegin()
@@ -795,7 +777,6 @@ bool BerkeleyBatch::ReadKey(DataStream&& key, DataStream& value)
     SafeDbt datValue;
     int ret = pdb->get(activeTxn, datKey, datValue, 0);
     if (ret == 0 && datValue.get_data() != nullptr) {
-        value.clear();
         value.write({AsBytePtr(datValue.get_data()), datValue.get_size()});
         return true;
     }
@@ -844,7 +825,7 @@ bool BerkeleyBatch::HasKey(DataStream&& key)
 bool BerkeleyBatch::ErasePrefix(Span<const std::byte> prefix)
 {
     if (!TxnBegin()) return false;
-    auto cursor{std::make_unique<BerkeleyCursor>(m_database, *this)};
+    auto cursor{std::make_unique<BerkeleyCursor>(m_database, this)};
     // const_cast is safe below even though prefix_key is an in/out parameter,
     // because we are not using the DB_DBT_USERMEM flag, so BDB will allocate
     // and return a different output data pointer

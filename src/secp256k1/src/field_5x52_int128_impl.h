@@ -10,7 +10,6 @@
 #include <stdint.h>
 
 #include "int128.h"
-#include "util.h"
 
 #ifdef VERIFY
 #define VERIFY_BITS(x, n) VERIFY_CHECK(((x) >> (n)) == 0)

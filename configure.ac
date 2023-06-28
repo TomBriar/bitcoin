@@ -96,6 +96,12 @@ case $host in
   ;;
 esac
 
+AC_ARG_WITH([seccomp],
+  [AS_HELP_STRING([--with-seccomp],
+  [enable experimental syscall sandbox feature (-sandbox), default is yes if seccomp-bpf is detected under Linux x86_64])],
+  [seccomp_found=$withval],
+  [seccomp_found=auto])
+
 AC_ARG_ENABLE([c++20],
   [AS_HELP_STRING([--enable-c++20],
   [enable compilation in c++20 mode (disabled by default)])],
@@ -108,6 +114,9 @@ AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
 else
 AX_CXX_COMPILE_STDCXX([20], [noext], [mandatory])
 fi
+
+dnl check if additional link flags are required for std::filesystem
+CHECK_FILESYSTEM
 
 dnl Unless the user specified OBJCXX, force it to be the same as CXX. This ensures
 dnl that we get the same -std flags for both.
@@ -238,10 +247,10 @@ dnl May be useful if warnings from external headers clutter the build output
 dnl too much, so that it becomes difficult to spot Bitcoin Core warnings
 dnl or if they cause a build failure with --enable-werror.
 AC_ARG_ENABLE([suppress-external-warnings],
-  [AS_HELP_STRING([--disable-suppress-external-warnings],
-                  [Do not suppress warnings from external headers (default is to suppress)])],
+  [AS_HELP_STRING([--enable-suppress-external-warnings],
+                  [Suppress warnings from external headers (default is no)])],
   [suppress_external_warnings=$enableval],
-  [suppress_external_warnings=yes])
+  [suppress_external_warnings=no])
 
 AC_ARG_ENABLE([lcov],
   [AS_HELP_STRING([--enable-lcov],
@@ -1002,7 +1011,6 @@ if test "$TARGET_OS" = "darwin"; then
   AX_CHECK_LINK_FLAG([-Wl,-dead_strip], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-dead_strip"], [], [$LDFLAG_WERROR])
   AX_CHECK_LINK_FLAG([-Wl,-dead_strip_dylibs], [CORE_LDFLAGS="$CORE_LDFLAGS -Wl,-dead_strip_dylibs"], [], [$LDFLAG_WERROR])
   AX_CHECK_LINK_FLAG([-Wl,-bind_at_load], [HARDENED_LDFLAGS="$HARDENED_LDFLAGS -Wl,-bind_at_load"], [], [$LDFLAG_WERROR])
-  AX_CHECK_LINK_FLAG([-Wl,-fixup_chains], [HARDENED_LDFLAGS="$HARDENED_LDFLAGS -Wl,-fixup_chains"], [], [$LDFLAG_WERROR])
 fi
 
 AC_CHECK_HEADERS([endian.h sys/endian.h byteswap.h sys/select.h sys/prctl.h sys/sysctl.h vm/vm_param.h sys/vmmeter.h sys/resources.h])
@@ -1165,16 +1173,17 @@ AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <ctime>]],
 )
 
 dnl Check for different ways of gathering OS randomness
-AC_MSG_CHECKING([for Linux getrandom function])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
-  #include <sys/random.h>]],
- [[ getrandom(nullptr, 32, 0); ]])],
- [ AC_MSG_RESULT([yes]); AC_DEFINE([HAVE_GETRANDOM], [1], [Define this symbol if the Linux getrandom function call is available]) ],
+AC_MSG_CHECKING([for Linux getrandom syscall])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <unistd.h>
+  #include <sys/syscall.h>
+  #include <linux/random.h>]],
+ [[ syscall(SYS_getrandom, nullptr, 32, 0); ]])],
+ [ AC_MSG_RESULT([yes]); AC_DEFINE([HAVE_SYS_GETRANDOM], [1], [Define this symbol if the Linux getrandom system call is available]) ],
  [ AC_MSG_RESULT([no])]
 )
 
-AC_MSG_CHECKING([for getentropy via sys/random.h])
-AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+AC_MSG_CHECKING([for getentropy via random.h])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <unistd.h>
  #include <sys/random.h>]],
  [[ getentropy(nullptr, 32) ]])],
  [ AC_MSG_RESULT([yes]); AC_DEFINE([HAVE_GETENTROPY_RAND], [1], [Define this symbol if the BSD getentropy system call is available with sys/random.h]) ],
@@ -1403,9 +1412,7 @@ if test "$use_usdt" != "no"; then
   AC_COMPILE_IFELSE([
     AC_LANG_PROGRAM(
       [#include <sys/sdt.h>],
-      [DTRACE_PROBE(context, event);
-       int a, b, c, d, e, f, g;
-       DTRACE_PROBE7(context, event, a, b, c, d, e, f, g);]
+      [DTRACE_PROBE("context", "event");]
     )],
     [AC_MSG_RESULT([yes]); AC_DEFINE([ENABLE_TRACING], [1], [Define to 1 to enable tracepoints for Userspace, Statically Defined Tracing])],
     [AC_MSG_RESULT([no]); use_usdt=no;]
@@ -1486,6 +1493,10 @@ if test "$use_boost" = "yes"; then
   AX_CHECK_PREPROC_FLAG([-DBOOST_NO_CXX98_FUNCTION_BASE], [BOOST_CPPFLAGS="$BOOST_CPPFLAGS -DBOOST_NO_CXX98_FUNCTION_BASE"], [], [$CXXFLAG_WERROR],
                         [AC_LANG_PROGRAM([[#include <boost/config.hpp>]])])
 
+  if test "$enable_debug" = "yes" || test "$enable_fuzz" = "yes"; then
+    BOOST_CPPFLAGS="$BOOST_CPPFLAGS -DBOOST_MULTI_INDEX_ENABLE_SAFE_MODE"
+  fi
+
   if test "$suppress_external_warnings" != "no"; then
     BOOST_CPPFLAGS=SUPPRESS_WARNINGS($BOOST_CPPFLAGS)
   fi
@@ -1533,6 +1544,36 @@ if test "$use_external_signer" != "no"; then
   fi
 fi
 AM_CONDITIONAL([ENABLE_EXTERNAL_SIGNER], [test "$use_external_signer" = "yes"])
+
+dnl Do not compile with syscall sandbox support when compiling under the sanitizers.
+dnl The sanitizers introduce use of syscalls that are not typically used in bitcoind
+dnl (such as execve when the sanitizers execute llvm-symbolizer).
+if test "$use_sanitizers" != ""; then
+  AC_MSG_WARN([Specifying --with-sanitizers forces --without-seccomp since the sanitizers introduce use of syscalls not allowed by the bitcoind syscall sandbox (-sandbox=<mode>).])
+  seccomp_found=no
+fi
+if test "$seccomp_found" != "no"; then
+  AC_MSG_CHECKING([for seccomp-bpf (Linux x86-64)])
+  AC_PREPROC_IFELSE([AC_LANG_PROGRAM([[
+      @%:@include <linux/seccomp.h>
+    ]], [[
+      #if !defined(__x86_64__)
+      #  error Syscall sandbox is an experimental feature currently available only under Linux x86-64.
+      #endif
+    ]])],[
+      AC_MSG_RESULT([yes])
+      seccomp_found="yes"
+      AC_DEFINE([USE_SYSCALL_SANDBOX], [1], [Define this symbol to build with syscall sandbox support.])
+    ],[
+      AC_MSG_RESULT([no])
+      seccomp_found="no"
+  ])
+fi
+dnl Currently only enable -sandbox=<mode> feature if seccomp is found.
+dnl In the future, sandboxing could be also be supported with other
+dnl sandboxing mechanisms besides seccomp.
+use_syscall_sandbox=$seccomp_found
+AM_CONDITIONAL([ENABLE_SYSCALL_SANDBOX], [test "$use_syscall_sandbox" != "no"])
 
 dnl Check for reduced exports
 if test "$use_reduce_exports" = "yes"; then
@@ -1592,9 +1633,12 @@ dnl ZMQ check
 
 if test "$use_zmq" = "yes"; then
   PKG_CHECK_MODULES([ZMQ], [libzmq >= 4],
-    AC_DEFINE([ENABLE_ZMQ], [1], [Define this symbol to enable ZMQ functions]),
-    [AC_MSG_WARN([libzmq version 4.x or greater not found, disabling])
+    AC_DEFINE([ENABLE_ZMQ], [1], [Define to 1 to enable ZMQ functions]),
+    [AC_DEFINE([ENABLE_ZMQ], [0], [Define to 1 to enable ZMQ functions])
+    AC_MSG_WARN([libzmq version 4.x or greater not found, disabling])
     use_zmq=no])
+else
+  AC_DEFINE_UNQUOTED([ENABLE_ZMQ], [0], [Define to 1 to enable ZMQ functions])
 fi
 
 if test "$use_zmq" = "yes"; then
@@ -1605,8 +1649,6 @@ if test "$use_zmq" = "yes"; then
     ;;
   esac
 fi
-
-AM_CONDITIONAL([ENABLE_ZMQ], [test "$use_zmq" = "yes"])
 
 dnl libmultiprocess library check
 
@@ -1802,6 +1844,8 @@ if test "$bitcoin_enable_qt" != "no"; then
   fi
 fi
 
+AM_CONDITIONAL([ENABLE_ZMQ], [test "$use_zmq" = "yes"])
+
 AC_MSG_CHECKING([whether to build test_bitcoin])
 if test "$use_tests" = "yes"; then
   if test "$enable_fuzz" = "yes"; then
@@ -1973,6 +2017,7 @@ echo
 echo "Options used to compile and link:"
 echo "  external signer = $use_external_signer"
 echo "  multiprocess    = $build_multiprocess"
+echo "  with experimental syscall sandbox support = $use_syscall_sandbox"
 echo "  with libs       = $build_bitcoin_libs"
 echo "  with wallet     = $enable_wallet"
 if test "$enable_wallet" != "no"; then

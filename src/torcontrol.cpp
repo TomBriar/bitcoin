@@ -16,6 +16,7 @@
 #include <netbase.h>
 #include <util/readwritefile.h>
 #include <util/strencodings.h>
+#include <util/syscall_sandbox.h>
 #include <util/thread.h>
 #include <util/time.h>
 
@@ -132,15 +133,15 @@ bool TorControlConnection::Connect(const std::string& tor_control_center, const 
         Disconnect();
     }
 
-    const std::optional<CService> control_service{Lookup(tor_control_center, 9051, fNameLookup)};
-    if (!control_service.has_value()) {
+    CService control_service;
+    if (!Lookup(tor_control_center, control_service, 9051, fNameLookup)) {
         LogPrintf("tor: Failed to look up control center %s\n", tor_control_center);
         return false;
     }
 
     struct sockaddr_storage control_address;
     socklen_t control_address_len = sizeof(control_address);
-    if (!control_service.value().GetSockAddr(reinterpret_cast<struct sockaddr*>(&control_address), &control_address_len)) {
+    if (!control_service.GetSockAddr(reinterpret_cast<struct sockaddr*>(&control_address), &control_address_len)) {
         LogPrintf("tor: Error parsing socket address %s\n", tor_control_center);
         return false;
     }
@@ -652,6 +653,7 @@ static std::thread torControlThread;
 
 static void TorControlThread(CService onion_service_target)
 {
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::TOR_CONTROL);
     TorController ctrl(gBase, gArgs.GetArg("-torcontrol", DEFAULT_TOR_CONTROL), onion_service_target);
 
     event_base_dispatch(gBase);

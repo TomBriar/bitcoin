@@ -17,8 +17,9 @@
 #include <signet.h>
 #include <streams.h>
 #include <undo.h>
-#include <util/batchpriority.h>
 #include <util/fs.h>
+#include <util/syscall_sandbox.h>
+#include <util/system.h>
 #include <validation.h>
 
 #include <map>
@@ -26,7 +27,6 @@
 
 namespace node {
 std::atomic_bool fReindex(false);
-std::atomic_bool g_indexes_ready_to_sync{false};
 
 bool CBlockIndexWorkComparator::operator()(const CBlockIndex* pa, const CBlockIndex* pb) const
 {
@@ -572,7 +572,7 @@ void BlockManager::UnlinkPrunedFiles(const std::set<int>& setFilesToPrune) const
         const bool removed_blockfile{fs::remove(BlockFileSeq().FileName(pos), ec)};
         const bool removed_undofile{fs::remove(UndoFileSeq().FileName(pos), ec)};
         if (removed_blockfile || removed_undofile) {
-            LogPrint(BCLog::BLOCKSTORAGE, "Prune: %s deleted blk/rev (%05u)\n", __func__, *it);
+            LogPrint(BCLog::BLOCKSTORE, "Prune: %s deleted blk/rev (%05u)\n", __func__, *it);
         }
     }
 }
@@ -641,7 +641,7 @@ bool BlockManager::FindBlockPos(FlatFilePos& pos, unsigned int nAddSize, unsigne
 
     if ((int)nFile != m_last_blockfile) {
         if (!fKnown) {
-            LogPrint(BCLog::BLOCKSTORAGE, "Leaving block file %i: %s\n", m_last_blockfile, m_blockfile_info[m_last_blockfile].ToString());
+            LogPrint(BCLog::BLOCKSTORE, "Leaving block file %i: %s\n", m_last_blockfile, m_blockfile_info[m_last_blockfile].ToString());
         }
         FlushBlockFile(!fKnown, finalize_undo);
         m_last_blockfile = nFile;
@@ -868,6 +868,7 @@ public:
 
 void ThreadImport(ChainstateManager& chainman, std::vector<fs::path> vImportFiles, const fs::path& mempool_path)
 {
+    SetSyscallSandboxPolicy(SyscallSandboxPolicy::INITIALIZATION_LOAD_BLOCKS);
     ScheduleBatchPriority();
 
     {
@@ -926,7 +927,8 @@ void ThreadImport(ChainstateManager& chainman, std::vector<fs::path> vImportFile
         for (Chainstate* chainstate : WITH_LOCK(::cs_main, return chainman.GetAll())) {
             BlockValidationState state;
             if (!chainstate->ActivateBestChain(state, nullptr)) {
-                AbortNode(strprintf("Failed to connect best block (%s)", state.ToString()));
+                LogPrintf("Failed to connect best block (%s)\n", state.ToString());
+                StartShutdown();
                 return;
             }
         }
@@ -938,6 +940,5 @@ void ThreadImport(ChainstateManager& chainman, std::vector<fs::path> vImportFile
         }
     } // End scope of ImportingNow
     chainman.ActiveChainstate().LoadMempool(mempool_path);
-    g_indexes_ready_to_sync = true;
 }
 } // namespace node

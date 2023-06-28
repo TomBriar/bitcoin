@@ -12,6 +12,7 @@
 #include <index/txindex.h>
 #include <key_io.h>
 #include <node/blockstorage.h>
+#include <node/chainstate.h>
 #include <node/coin.h>
 #include <node/context.h>
 #include <node/psbt.h>
@@ -20,6 +21,7 @@
 #include <policy/policy.h>
 #include <policy/rbf.h>
 #include <primitives/transaction.h>
+#include <primitives/compression.h>
 #include <psbt.h>
 #include <random.h>
 #include <rpc/blockchain.h>
@@ -46,11 +48,17 @@
 
 #include <univalue.h>
 
+#include <secp256k1.h>
+#include <secp256k1_recovery.h>
+#include <secp256k1_schnorrsig.h>
+#include <secp256k1_extrakeys.h>
+
 using node::AnalyzePSBT;
 using node::FindCoins;
 using node::GetTransaction;
 using node::NodeContext;
 using node::PSBTAnalysis;
+using node::BlockManager;
 
 static void TxToJSON(const CTransaction& tx, const uint256 hashBlock, UniValue& entry,
                      Chainstate& active_chainstate, const CTxUndo* txundo = nullptr,
@@ -170,9 +178,8 @@ static std::vector<RPCArg> CreateTxDoc()
     };
 }
 
-// Update PSBT with information from the mempool, the UTXO set, the txindex, and the provided descriptors.
-// Optionally, sign the inputs that we can using information from the descriptors.
-PartiallySignedTransaction ProcessPSBT(const std::string& psbt_string, const std::any& context, const HidingSigningProvider& provider, int sighash_type, bool finalize)
+// Update PSBT with information from the mempool, the UTXO set, the txindex, and the provided descriptors
+PartiallySignedTransaction ProcessPSBT(const std::string& psbt_string, const std::any& context, const HidingSigningProvider& provider)
 {
     // Unserialize the transactions
     PartiallySignedTransaction psbtx;
@@ -241,10 +248,9 @@ PartiallySignedTransaction ProcessPSBT(const std::string& psbt_string, const std
         }
 
         // Update script/keypath information using descriptor data.
-        // Note that SignPSBTInput does a lot more than just constructing ECDSA signatures.
-        // We only actually care about those if our signing provider doesn't hide private
-        // information, as is the case with `descriptorprocesspsbt`
-        SignPSBTInput(provider, psbtx, /*index=*/i, &txdata, sighash_type, /*out_sigdata=*/nullptr, finalize);
+        // Note that SignPSBTInput does a lot more than just constructing ECDSA signatures
+        // we don't actually care about those here, in fact.
+        SignPSBTInput(provider, psbtx, /*index=*/i, &txdata, /*sighash=*/1);
     }
 
     // Update script/keypath information using descriptor data.
@@ -491,6 +497,160 @@ static RPCHelpMan decoderawtransaction()
     TxToUniv(CTransaction(std::move(mtx)), /*block_hash=*/uint256(), /*entry=*/result, /*include_hex=*/false);
 
     return result;
+},
+    };
+}
+
+class SecpContext {
+	secp256k1_context* ctx;
+	public:
+		SecpContext() {
+			ctx = secp256k1_context_create(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY);
+		}
+		~SecpContext() {
+			secp256k1_context_destroy(ctx);
+		}
+		secp256k1_context* GetContext() {
+			return ctx;
+		}
+};
+SecpContext secp_context = SecpContext();
+
+static RPCHelpMan compressrawtransaction()
+{
+    return RPCHelpMan{"compressrawtransaction",
+                "Return a JSON object representing the compressed, serialized, hex-encoded transaction.",
+                {
+                    {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The transaction hex string"},
+                },
+                RPCResult{
+                    RPCResult::Type::OBJ, "", "",
+					{
+                    	{RPCResult::Type::STR_HEX, "result", "The compressed transaction hex string"},
+                    	{RPCResult::Type::STR, "error", "Errors encountered during the compression"},
+					},
+                },
+                RPCExamples{
+                    HelpExampleCli("compressrawtransaction", "\"hexstring\"")
+            + HelpExampleRpc("compressrawtransaction", "\"hexstring\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    const NodeContext& node = EnsureAnyNodeContext(request.context);
+	ChainstateManager& chainman = EnsureChainman(node);
+	const BlockManager& blockman = chainman.m_blockman;
+    UniValue r(UniValue::VOBJ);
+	CMutableTransaction mtx;
+	std::string error = "";
+
+	std::vector<CScript> input_scripts;
+	std::vector<CCompressedTxId> txids;
+    if (DecodeHexTx(mtx, request.params[0].get_str(), true, true)) {
+		std::map<COutPoint, Coin> coins; 
+		for (size_t index = 0; index < mtx.vin.size(); index++) { 
+			coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)]; // Create empty map entry keyed by prevout. 
+		} 
+		FindCoins(node, coins);
+		for (size_t index = 0; index < mtx.vin.size(); index++) { 
+			input_scripts.push_back(coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)].out.scriptPubKey);
+			uint256 block_hash;
+			bool compressed_txid = false;
+			if (GetTransaction(nullptr, node.mempool.get(), mtx.vin.at(index).prevout.hash, block_hash, blockman)) {
+				const CBlockIndex* pindex{nullptr};
+				{
+					LOCK(cs_main);
+					pindex = chainman.m_blockman.LookupBlockIndex(block_hash);
+				}
+				uint32_t block_height = pindex->nHeight;
+				uint32_t block_index;
+				CBlock block;
+				//If the transaction was found abovej
+				if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
+					if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
+						txids.push_back(CCompressedTxId(block_height, block_index));
+						compressed_txid = false;	
+					}
+				}
+			}
+			if (!compressed_txid) {
+				txids.push_back(CCompressedTxId(mtx.vin.at(index).prevout.hash));
+				error = "Could not find Transaction Index to Compress";
+			} 
+		}
+	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
+
+	CCompressedTransaction ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
+	CDataStream stream(SER_DISK, 0);
+	ctx.Serialize(stream);
+    r.pushKV("result", stream.str());
+    r.pushKV("error", error);
+	return r;
+},
+    };
+}
+
+static RPCHelpMan decompressrawtransaction()
+{
+    return RPCHelpMan{"decompressrawtransaction",
+                "Return a JSON object representing the decompressed, serialized, hex-encoded transaction.",
+                {
+                    {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO, "The compressed transaction hex string"},
+                },
+                RPCResult{
+                   	RPCResult::Type::STR_HEX, "result", "The decompressed transaction hex string"
+                },
+                RPCExamples{
+                    HelpExampleCli("decompressrawtransaction", "\"hexstring\"")
+            + HelpExampleRpc("decompressrawtransaction", "\"hexstring\"")
+                },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+	const NodeContext& node = EnsureAnyNodeContext(request.context);
+	ChainstateManager& chainman = EnsureChainman(node);
+	const BlockManager& blockman = chainman.m_blockman;
+    UniValue r(UniValue::VOBJ);
+	try {
+		CDataStream ssData(ParseHex(request.params[0].get_str()), SER_NETWORK, PROTOCOL_VERSION);
+		CCompressedTransaction ctx = CCompressedTransaction(deserialize, ssData);
+		std::vector<uint256> txids;
+		if (ctx.vin().size() > 0) {
+			std::vector<CBlockIndex*> blocks;
+			blocks = chainman.m_blockman.GetAllBlockIndices();
+			int blocks_length = blocks.size();
+
+			for (size_t index = 0; index < ctx.vin().size(); index++) {
+				if (ctx.vin().at(index).prevout().txid().IsCompressed()) {
+					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
+						const CBlockIndex* pindex{nullptr};
+						pindex = blocks.at(blocks_index);
+						uint32_t height = pindex->nHeight;
+						if (height == ctx.vin().at(index).prevout().txid().block_height()) {
+							CBlock block;
+							chainman.m_blockman.ReadBlockFromDisk(block, *pindex);
+							uint256 txid = (*block.vtx.at(ctx.vin().at(index).prevout().txid().block_index())).GetHash();
+							CTransactionRef tr = GetTransaction(nullptr, nullptr, txid, txid, blockman);
+							if (tr == nullptr) throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Couldn't find TxId");
+							txids.push_back(txid);
+						}
+					}
+				} else txids.push_back(ctx.vin().at(index).prevout().txid().txid());
+			}
+		}
+
+		std::map<COutPoint, Coin> coins; 
+		for (size_t index = 0; index < ctx.vin().size(); index++) { 
+			coins[COutPoint(txids.at(index), ctx.vin().at(index).prevout().n())]; // Create empty map entry keyed by prevout.
+		} 
+		FindCoins(node, coins);
+		std::vector<CTxOut> outs;
+		for (size_t index = 0; index < ctx.vin().size(); index++) { 
+			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin().at(index).prevout().n())].out); 
+		}
+		return EncodeHexTx(CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs)));
+	} catch (const std::exception& exc) {
+		// Fall through. 
+	}	
+	throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Compressed TX decode failed");
 },
     };
 }
@@ -1697,9 +1857,7 @@ static RPCHelpMan utxoupdatepsbt()
     const PartiallySignedTransaction& psbtx = ProcessPSBT(
         request.params[0].get_str(),
         request.context,
-        HidingSigningProvider(&provider, /*hide_secret=*/true, /*hide_origin=*/false),
-        /*sighash_type=*/SIGHASH_ALL,
-        /*finalize=*/false);
+        HidingSigningProvider(&provider, /*hide_secret=*/true, /*hide_origin=*/false));
 
     CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
     ssTx << psbtx;
@@ -1918,88 +2076,14 @@ static RPCHelpMan analyzepsbt()
     };
 }
 
-RPCHelpMan descriptorprocesspsbt()
-{
-    return RPCHelpMan{"descriptorprocesspsbt",
-                "\nUpdate all segwit inputs in a PSBT with information from output descriptors, the UTXO set or the mempool. \n"
-                "Then, sign the inputs we are able to with information from the output descriptors. ",
-                {
-                    {"psbt", RPCArg::Type::STR, RPCArg::Optional::NO, "The transaction base64 string"},
-                    {"descriptors", RPCArg::Type::ARR, RPCArg::Optional::NO, "An array of either strings or objects", {
-                        {"", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "An output descriptor"},
-                        {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "An object with an output descriptor and extra information", {
-                             {"desc", RPCArg::Type::STR, RPCArg::Optional::NO, "An output descriptor"},
-                             {"range", RPCArg::Type::RANGE, RPCArg::Default{1000}, "Up to what index HD chains should be explored (either end or [begin,end])"},
-                        }},
-                    }},
-                    {"sighashtype", RPCArg::Type::STR, RPCArg::Default{"DEFAULT for Taproot, ALL otherwise"}, "The signature hash type to sign with if not specified by the PSBT. Must be one of\n"
-            "       \"DEFAULT\"\n"
-            "       \"ALL\"\n"
-            "       \"NONE\"\n"
-            "       \"SINGLE\"\n"
-            "       \"ALL|ANYONECANPAY\"\n"
-            "       \"NONE|ANYONECANPAY\"\n"
-            "       \"SINGLE|ANYONECANPAY\""},
-                    {"bip32derivs", RPCArg::Type::BOOL, RPCArg::Default{true}, "Include BIP 32 derivation paths for public keys if we know them"},
-                    {"finalize", RPCArg::Type::BOOL, RPCArg::Default{true}, "Also finalize inputs if possible"},
-                },
-                RPCResult{
-                    RPCResult::Type::OBJ, "", "",
-                    {
-                        {RPCResult::Type::STR, "psbt", "The base64-encoded partially signed transaction"},
-                        {RPCResult::Type::BOOL, "complete", "If the transaction has a complete set of signatures"},
-                    }
-                },
-                RPCExamples{
-                    HelpExampleCli("descriptorprocesspsbt", "\"psbt\" \"[\\\"descriptor1\\\", \\\"descriptor2\\\"]\"") +
-                    HelpExampleCli("descriptorprocesspsbt", "\"psbt\" \"[{\\\"desc\\\":\\\"mydescriptor\\\", \\\"range\\\":21}]\"")
-                },
-        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
-{
-    // Add descriptor information to a signing provider
-    FlatSigningProvider provider;
-
-    auto descs = request.params[1].get_array();
-    for (size_t i = 0; i < descs.size(); ++i) {
-        EvalDescriptorStringOrObject(descs[i], provider, /*expand_priv=*/true);
-    }
-
-    int sighash_type = ParseSighashString(request.params[2]);
-    bool bip32derivs = request.params[3].isNull() ? true : request.params[3].get_bool();
-    bool finalize = request.params[4].isNull() ? true : request.params[4].get_bool();
-
-    const PartiallySignedTransaction& psbtx = ProcessPSBT(
-        request.params[0].get_str(),
-        request.context,
-        HidingSigningProvider(&provider, /*hide_secret=*/false, !bip32derivs),
-        sighash_type,
-        finalize);
-
-    // Check whether or not all of the inputs are now signed
-    bool complete = true;
-    for (const auto& input : psbtx.inputs) {
-        complete &= PSBTInputSigned(input);
-    }
-
-    CDataStream ssTx(SER_NETWORK, PROTOCOL_VERSION);
-    ssTx << psbtx;
-
-    UniValue result(UniValue::VOBJ);
-
-    result.pushKV("psbt", EncodeBase64(ssTx));
-    result.pushKV("complete", complete);
-
-    return result;
-},
-    };
-}
-
 void RegisterRawTransactionRPCCommands(CRPCTable& t)
 {
     static const CRPCCommand commands[]{
         {"rawtransactions", &getrawtransaction},
         {"rawtransactions", &createrawtransaction},
         {"rawtransactions", &decoderawtransaction},
+        {"rawtransactions", &compressrawtransaction},
+        {"rawtransactions", &decompressrawtransaction},
         {"rawtransactions", &decodescript},
         {"rawtransactions", &combinerawtransaction},
         {"rawtransactions", &signrawtransactionwithkey},
@@ -2009,7 +2093,6 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
         {"rawtransactions", &createpsbt},
         {"rawtransactions", &converttopsbt},
         {"rawtransactions", &utxoupdatepsbt},
-        {"rawtransactions", &descriptorprocesspsbt},
         {"rawtransactions", &joinpsbts},
         {"rawtransactions", &analyzepsbt},
     };

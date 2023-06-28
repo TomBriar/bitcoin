@@ -109,7 +109,8 @@ incoming I2P connections (`-i2pacceptincoming`):
 To see which I2P peers your node is connected to, use `bitcoin-cli -netinfo 4`
 or the `getpeerinfo` RPC (e.g. `bitcoin-cli getpeerinfo`).
 
-You can use the `getnodeaddresses` RPC to fetch a number of I2P peers known to your node; run `bitcoin-cli help getnodeaddresses` for details.
+To see which I2P addresses your node knows, use the `getnodeaddresses 0 i2p`
+RPC.
 
 ## Compatibility
 

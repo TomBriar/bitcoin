@@ -21,6 +21,65 @@
 #include <util/strencodings.h>
 #include <util/translation.h>
 
+#include <string>
+#include <bitset>
+#include <cmath>
+#include <iomanip>
+#include <vector>
+#include <prevector.h>
+#include <inttypes.h>
+#include <assert.h>
+#include <chain.h>
+#include <logging.h>
+#include <validation.h>
+#include <script/sign.h>
+#include <node/blockstorage.h>
+#include <secp256k1.h>
+#include <secp256k1_recovery.h>
+#include <secp256k1_schnorrsig.h>
+#include <secp256k1_extrakeys.h>
+#include <base58.h>
+#include <chain.h>
+#include <coins.h>
+#include <consensus/amount.h>
+#include <consensus/validation.h>
+#include <core_io.h>
+#include <index/txindex.h>
+#include <key_io.h>
+#include <node/blockstorage.h>
+#include <node/coin.h>
+#include <node/context.h>
+#include <node/psbt.h>
+#include <node/transaction.h>
+#include <node/context.h>
+#include <policy/packages.h>
+#include <policy/policy.h>
+#include <policy/rbf.h>
+#include <primitives/transaction.h>
+#include <psbt.h>
+#include <random.h>
+#include <rpc/blockchain.h>
+#include <rpc/rawtransaction_util.h>
+#include <rpc/server.h>
+#include <rpc/server_util.h>
+#include <rpc/util.h>
+#include <script/script.h>
+#include <script/sign.h>
+#include <script/signingprovider.h>
+#include <script/standard.h>
+#include <uint256.h>
+#include <util/bip32.h>
+#include <util/check.h>
+#include <util/strencodings.h>
+#include <util/string.h>
+#include <util/vector.h>
+#include <validation.h>
+#include <validationinterface.h>
+#include <numeric>
+#include <stdint.h>
+#include <univalue.h>
+
+
 void AddInputs(CMutableTransaction& rawTx, const UniValue& inputs_in, std::optional<bool> rbf)
 {
     UniValue inputs;
@@ -297,6 +356,7 @@ void SignTransaction(CMutableTransaction& mtx, const SigningProvider* keystore, 
     bool complete = SignTransaction(mtx, keystore, coins, nHashType, input_errors);
     SignTransactionResultToJSON(mtx, complete, coins, input_errors, result);
 }
+
 
 void SignTransactionResultToJSON(CMutableTransaction& mtx, bool complete, const std::map<COutPoint, Coin>& coins, const std::map<int, bilingual_str>& input_errors, UniValue& result)
 {
