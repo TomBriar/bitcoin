@@ -110,7 +110,7 @@ public:
         return block;
     }
 
-	bool LookupTransactionIndex(uint256 txid, uint32_t& index) 
+	bool LookupTransactionIndex(uint256 txid, uint32_t& index) const
 	{
 		for (size_t vindex = 0; vindex < this->vtx.size(); vindex++) {
 			if ((*vtx.at(vindex)).GetHash() == txid) {

@@ -535,7 +535,6 @@ static RPCHelpMan compressrawtransaction()
 {
     const NodeContext& node = EnsureAnyNodeContext(request.context);
 	ChainstateManager& chainman = EnsureChainman(node);
-	const BlockManager& blockman = chainman.m_blockman;
     UniValue r(UniValue::VOBJ);
 	CMutableTransaction mtx;
 	std::string error = "";
@@ -549,40 +548,38 @@ static RPCHelpMan compressrawtransaction()
 		} 
 		FindCoins(node, coins);
 		for (size_t index = 0; index < mtx.vin.size(); index++) { 
-			input_scripts.push_back(coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)].out.scriptPubKey);
+			Coin coin = coins[COutPoint(mtx.vin.at(index).prevout.hash, mtx.vin.at(index).prevout.n)];
+			input_scripts.push_back(coin.out.scriptPubKey);
 			uint256 block_hash;
 			bool compressed_txid = false;
-			if (GetTransaction(nullptr, node.mempool.get(), mtx.vin.at(index).prevout.hash, block_hash, blockman)) {
-				const CBlockIndex* pindex{nullptr};
-				{
-					LOCK(cs_main);
-					pindex = chainman.m_blockman.LookupBlockIndex(block_hash);
-				}
-				uint32_t block_height = pindex->nHeight;
-				uint32_t block_index;
-				CBlock block;
-				//If the transaction was found abovej
-				if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
-					if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
-						{
-							LOCK(cs_main);
-							Chainstate& active_chainstate = chainman.ActiveChainstate();
+			const CBlockIndex* pindex{nullptr};
+			{
+				LOCK(cs_main);
+				pindex = chainman.ActiveChain()[coin.nHeight];
+			}
+			uint32_t block_height = pindex->nHeight;
+			uint32_t block_index;
+			CBlock block;
+			if (chainman.m_blockman.ReadBlockFromDisk(block, *pindex)) {
+				if (block.LookupTransactionIndex(mtx.vin.at(index).prevout.hash, block_index)) {
+					{
+						LOCK(cs_main);
+						Chainstate& active_chainstate = chainman.ActiveChainstate();
 
-							const CBlockIndex& tip{*CHECK_NONFATAL(active_chainstate.m_chain.Tip())};
-							const int height{tip.nHeight};
-							if ((height-100) >= int(block_height)) {
-								txids.push_back(CCompressedTxId(block_height, block_index));
-								compressed_txid = true;	
-							} else {
-								error = strprintf("UTXO (%u): Is not older then one hundred blocks and so we will not compress the TXID", index);
-							}
+						const CBlockIndex& tip{*CHECK_NONFATAL(active_chainstate.m_chain.Tip())};
+						const int height{tip.nHeight};
+						if ((height-100) >= int(block_height)) {
+							txids.push_back(CCompressedTxId(block_height, block_index));
+							compressed_txid = true;	
+						} else {
+							error = strprintf("UTXO (%u): Is not older then one hundred blocks and so we will not compress the TXID", index);
 						}
 					}
 				}
 			}
 			if (!compressed_txid) {
 				txids.push_back(CCompressedTxId(mtx.vin.at(index).prevout.hash));
-				error = strprintf("UTXO (%u): Could not find Transaction Index to Compress", index);
+				if (error == "") error = strprintf("UTXO (%u): Could not find Transaction Index to Compress", index);
 			} 
 		}
 	} else throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
@@ -590,7 +587,9 @@ static RPCHelpMan compressrawtransaction()
 	CCompressedTransaction ctx = CCompressedTransaction(secp_context.GetContext(), CTransaction(mtx), txids, input_scripts);
 	CDataStream stream(SER_DISK, 0);
 	ctx.Serialize(stream);
-    r.pushKV("result", stream.str());
+	std::vector<unsigned char> hex(stream.size());
+	stream.read(MakeWritableByteSpan(hex));
+    r.pushKV("result", HexStr(hex));
     r.pushKV("error", error);
 	return r;
 },
@@ -615,7 +614,6 @@ static RPCHelpMan decompressrawtransaction()
 {
 	const NodeContext& node = EnsureAnyNodeContext(request.context);
 	ChainstateManager& chainman = EnsureChainman(node);
-	const BlockManager& blockman = chainman.m_blockman;
     UniValue r(UniValue::VOBJ);
 	try {
 		CDataStream ssData(ParseHex(request.params[0].get_str()), SER_NETWORK, PROTOCOL_VERSION);
@@ -624,23 +622,24 @@ static RPCHelpMan decompressrawtransaction()
 		if (ctx.vin().size() > 0) {
 			std::vector<CBlockIndex*> blocks;
 			blocks = chainman.m_blockman.GetAllBlockIndices();
-			int blocks_length = blocks.size();
 
 			for (size_t index = 0; index < ctx.vin().size(); index++) {
 				if (ctx.vin().at(index).prevout().txid().IsCompressed()) {
-					for (int blocks_index = 0; blocks_index < blocks_length; blocks_index++) {
-						const CBlockIndex* pindex{nullptr};
-						pindex = blocks.at(blocks_index);
-						uint32_t height = pindex->nHeight;
-						if (height == ctx.vin().at(index).prevout().txid().block_height()) {
-							CBlock block;
-							chainman.m_blockman.ReadBlockFromDisk(block, *pindex);
-							uint256 txid = (*block.vtx.at(ctx.vin().at(index).prevout().txid().block_index())).GetHash();
-							CTransactionRef tr = GetTransaction(nullptr, nullptr, txid, txid, blockman);
-							if (tr == nullptr) throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Couldn't find TxId");
-							txids.push_back(txid);
-						}
+					uint256 txid;
+					const CBlockIndex* pindex{nullptr};
+					{
+						LOCK(cs_main);
+						pindex = chainman.ActiveChain()[ctx.vin().at(index).prevout().txid().block_height()];
 					}
+					if (pindex != nullptr) {
+						CBlock block;
+						chainman.m_blockman.ReadBlockFromDisk(block, *pindex);
+						if (ctx.vin().at(index).prevout().txid().block_index() < block.vtx.size()) {
+							txid = (*block.vtx.at(ctx.vin().at(index).prevout().txid().block_index())).GetHash();
+							txids.push_back(txid);
+						} 
+					}
+					if (txid.IsNull()) throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "Couldn't find TxId");
 				} else txids.push_back(ctx.vin().at(index).prevout().txid().txid());
 			}
 		}
@@ -654,7 +653,8 @@ static RPCHelpMan decompressrawtransaction()
 		for (size_t index = 0; index < ctx.vin().size(); index++) { 
 			outs.push_back(coins[COutPoint(txids.at(index), ctx.vin().at(index).prevout().n())].out); 
 		}
-		return EncodeHexTx(CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs)));
+		CTransaction tx = CTransaction(CMutableTransaction(secp_context.GetContext(), ctx, txids, outs));
+		return EncodeHexTx(tx);
 	} catch (const std::exception& exc) {
 		// Fall through. 
 	}	

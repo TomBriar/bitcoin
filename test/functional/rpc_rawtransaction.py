@@ -252,9 +252,8 @@ class RawTransactionsTest(BitcoinTestFramework):
         self.log.info("Test compressrawtransaction")
         tx = "010000000001010000000000000072c1a6a246ae63f74f931e8365e15a089c68d61900000000000000000000ffffffff0100e1f50500000000000102616100000000"
         compressed_transaction = self.nodes[0].compressrawtransaction(tx)
-        self.log.info("Compressed_Transaction =	"+compressed_transaction)
-        compressed_tx_target = ""
-        assert_equal(compressed_tx_target, compressed_transaction)
+        compressed_tx_target = "1580690000000000000072c1a6a246ae63f74f931e8365e15a089c68d61900000000000005000102616100aed6c100"
+        assert_equal(compressed_tx_target, compressed_transaction["result"])
 
     def createrawtransaction_tests(self):
         self.log.info("Test createrawtransaction")
@@ -465,9 +464,8 @@ class RawTransactionsTest(BitcoinTestFramework):
 
     def decompressrawtransaction_tests(self):
         self.log.info("Test decompressrawtransaction")
-        tx = ""
-        decompressed_transaction = self.nodes[0].compressrawtransaction(tx)
-        self.log.info("Compressed_Transaction =	"+compressed_transaction)
+        tx = "1580690000000000000072c1a6a246ae63f74f931e8365e15a089c68d61900000000000005000102616100aed6c100"
+        decompressed_transaction = self.nodes[0].decompressrawtransaction(tx)
         decompressed_tx_target = "010000000001010000000000000072c1a6a246ae63f74f931e8365e15a089c68d61900000000000000000000ffffffff0100e1f50500000000000102616100000000"
         assert_equal(decompressed_transaction, decompressed_tx_target)
 
