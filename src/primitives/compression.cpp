@@ -56,11 +56,11 @@ CCompressedTxIn::CCompressedTxIn(secp256k1_context* ctx, const CTxIn& txin, cons
 			CDataStream stream(SER_DISK, 0);
 			stream << VARINT(txin.scriptSig.size());
 			if (txin.scriptSig.size())
-				stream << txin.scriptSig;
+				stream.write(MakeByteSpan(txin.scriptSig));
 			stream << VARINT(txin.scriptWitness.stack.size());
 			for (size_t index = 0; index < txin.scriptWitness.stack.size(); index++) {
 				stream << VARINT(txin.scriptWitness.stack.at(index).size());
-				stream << txin.scriptWitness.stack.at(index);
+				stream.write(MakeByteSpan(txin.scriptWitness.stack.at(index)));
 			}
 			m_signature.resize(stream.size());
 			stream.read(MakeWritableByteSpan(m_signature));
@@ -346,7 +346,7 @@ CMutableTransaction::CMutableTransaction(const secp256k1_context* ctx, const CCo
 			uint64_t witnessCount = std::numeric_limits<uint64_t>::max();
 			stream >> VARINT(witnessCount);
 			std::vector<std::vector<unsigned char>> stack;
-			for (uint64_t i = 0; witnessCount < i; i++) {
+			for (uint64_t i = 0; i < witnessCount; i++) {
 				uint64_t witnessLength = std::numeric_limits<uint64_t>::max();
 				stream >> VARINT(witnessLength);
 				std::vector<unsigned char> witness(witnessLength);
