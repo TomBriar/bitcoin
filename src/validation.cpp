@@ -34,6 +34,7 @@
 #include <policy/settings.h>
 #include <pow.h>
 #include <primitives/block.h>
+#include <primitives/compression.h>
 #include <primitives/transaction.h>
 #include <random.h>
 #include <reverse_iterator.h>
@@ -4294,6 +4295,80 @@ bool Chainstate::LoadChainTip()
               FormatISO8601DateTime(tip->GetBlockTime()),
               GuessVerificationProgress(m_chainman.GetParams().TxData(), tip));
     return true;
+}
+
+std::tuple<uint32_t, std::vector<CCompressedInput>> Chainstate::CompressOutPoints(CTransaction& tx, std::vector<std::string>& warnings)
+{
+    std::vector<CCompressedInput> cinputs;
+    int barrier_height = CHECK_NONFATAL(this->m_chain.Tip())->nHeight - 100;
+
+    uint32_t minimumHeight = std::numeric_limits<uint32_t>::max();
+    if (tx.nLockTime > 0) minimumHeight = tx.nLockTime-1;
+
+    std::vector<Coin> coins;
+    for (size_t index = 0; index < tx.vin.size(); index++) {
+        Coin coin;
+        if (this->CoinsTip().GetCoin(tx.vin[index].prevout, coin)) {
+            if (coin.nHeight >= barrier_height) {
+                coin.nHeight = 0;
+                warnings.push_back(strprintf("UTXO(%u): %s", index, "Input must be older then 100 blocks to avoid a block reorg, Input will be uncompressed"));
+            } else if (coin.nHeight <= minimumHeight) {
+                minimumHeight = coin.nHeight-1;
+            }
+        } else {
+            warnings.push_back(strprintf("UTXO(%u): %s", index, "Input missing or spent"));
+        }
+        coins.push_back(coin);
+    }
+
+    for (size_t index = 0; index < tx.vin.size(); index++) {
+        Coin coin = coins[index];
+        if (!coin.nHeight) {
+            cinputs.push_back(CCompressedInput{CCompressedOutPoint(tx.vin[index].prevout.hash, tx.vin[index].prevout.n), coin.out.scriptPubKey});
+            continue;
+        }
+        CBlockIndex* pindex = this->m_chain[coin.nHeight];
+        CBlock block;
+        this->m_blockman.ReadBlockFromDisk(block, *pindex);
+        uint32_t flattendIndex = 0;
+        for (size_t vindex = 0; vindex < block.vtx.size(); vindex++) {
+            if ((block.vtx[vindex])->GetHash() == tx.vin[index].prevout.hash) {
+                cinputs.push_back(CCompressedInput{CCompressedOutPoint(coin.nHeight-minimumHeight, flattendIndex+tx.vin[index].prevout.n), coin.out.scriptPubKey});
+                break;
+            }
+            flattendIndex += (block.vtx[vindex])->vout.size();
+        }
+        if (index+1 > cinputs.size()) {
+            cinputs.push_back(CCompressedInput{CCompressedOutPoint(tx.vin[index].prevout.hash, tx.vin[index].prevout.n), coin.out.scriptPubKey});
+            warnings.push_back(strprintf("UTXO(%u): %s", index, "Coin found but block could not be read, Possibly a pruned node, Input will be uncompressed"));
+        }
+    }
+    return std::make_tuple(minimumHeight, cinputs);
+}
+
+std::vector<COutPoint> Chainstate::UncompressOutPoints(CCompressedTransaction& ctx) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
+{
+    std::vector<COutPoint> prevouts;
+
+    for (size_t index = 0; index < ctx.vin().size(); index++) {
+        if (ctx.vin()[index].prevout().IsCompressed()) {
+            CBlockIndex* pindex = this->m_chainman.ActiveChain()[ctx.vin()[index].prevout().block_height()+ctx.minimumHeight()];
+            if (pindex) {
+                CBlock block;
+                this->m_blockman.ReadBlockFromDisk(block, *pindex);
+                uint32_t vcounter = 0;
+                for (size_t vindex = 0; vindex < block.vtx.size(); vindex++) {
+                    if ((ctx.vin()[index].prevout().block_index()-vcounter) < (block.vtx[vindex])->vout.size()) {
+                        prevouts.emplace_back((block.vtx[vindex])->GetHash(), ctx.vin()[index].prevout().block_index()-vcounter);
+                    }
+                    vcounter += (block.vtx[vindex])->vout.size();
+                }
+            }
+        }
+        if (prevouts.size() != index+1) prevouts.emplace_back(Txid::FromUint256(ctx.vin()[index].prevout().txid()), ctx.vin()[index].prevout().vout());
+    }
+
+    return prevouts;
 }
 
 CVerifyDB::CVerifyDB(Notifications& notifications)
