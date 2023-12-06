@@ -159,6 +159,21 @@ BOOST_AUTO_TEST_CASE(rpc_rawparams)
     BOOST_CHECK_NO_THROW(r = CallRPC(std::string("decoderawtransaction ")+rawtx+" false"));
     BOOST_CHECK_THROW(r = CallRPC(std::string("decoderawtransaction ")+rawtx+" false extra"), std::runtime_error);
 
+    BOOST_CHECK_THROW(CallRPC("compressrawtransaction"), std::runtime_error);
+    BOOST_CHECK_THROW(CallRPC("compressrawtransaction null"), std::runtime_error);
+    BOOST_CHECK_THROW(CallRPC("compressrawtransaction DEADBEEF"), std::runtime_error);
+    BOOST_CHECK_NO_THROW(r = CallRPC(std::string("compressrawtransaction ")+rawtx));
+    std::string compressedrawtx = "158efefefe7fc400a15d57094aa7a21a28cb20b59aab8fc7d1149a3bdbcddba9c622e4f5f6a99ece016e6c493046022100f93bb0e7d8db7bd46e40132d1f8242026e045f03a0efe71bbb8e3f475e970d790221009337cd7f1f929f00cc6ff01f03729b069a7c21b59b1736ddfee5db5946c5da8c0121033b9b137ee87d5a812d6f506efdd37f0affa7ffc310711c06c7f3e097c9447c52000389035a9225b3839e2bbf32d826a1e222031fd8aed6c100";
+    BOOST_CHECK_EQUAL(r.get_obj().find_value("result").get_str(), compressedrawtx);
+    BOOST_CHECK_THROW(CallRPC(std::string("compressrawtransaction ")+rawtx+" extra"), std::runtime_error);
+
+    BOOST_CHECK_THROW(CallRPC("decompressrawtransaction"), std::runtime_error);
+    BOOST_CHECK_THROW(CallRPC("decompressrawtransaction null"), std::runtime_error);
+    BOOST_CHECK_THROW(CallRPC("decompressrawtransaction DEADBEEF"), std::runtime_error);
+    BOOST_CHECK_NO_THROW(r = CallRPC(std::string("decompressrawtransaction ")+compressedrawtx));
+    BOOST_CHECK_EQUAL(r.get_str(), rawtx);
+    BOOST_CHECK_THROW(CallRPC(std::string("decompressrawtransaction ")+compressedrawtx+" extra"), std::runtime_error);
+
     // Only check failure cases for sendrawtransaction, there's no network to send to...
     BOOST_CHECK_THROW(CallRPC("sendrawtransaction"), std::runtime_error);
     BOOST_CHECK_THROW(CallRPC("sendrawtransaction null"), std::runtime_error);
