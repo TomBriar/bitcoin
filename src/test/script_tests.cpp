@@ -8,6 +8,7 @@
 #include <common/system.h>
 #include <core_io.h>
 #include <key.h>
+#include <primitives/compression.h>
 #include <rpc/util.h>
 #include <script/script.h>
 #include <script/script_error.h>
@@ -1518,6 +1519,18 @@ static void AssetTest(const UniValue& test)
         mtx.vin[idx].scriptSig = ScriptFromHex(test["success"]["scriptSig"].get_str());
         mtx.vin[idx].scriptWitness = ScriptWitnessFromJSON(test["success"]["witness"]);
         CTransaction tx(mtx);
+
+        //Compression Tests
+        if (fin) {
+            std::vector<CCompressedInput> cinputs;
+            std::vector<COutPoint> outpoints;
+            for (size_t index = 0; index < tx.vin.size(); index++) {
+                outpoints.push_back(tx.vin[index].prevout);
+                cinputs.push_back(CCompressedInput(CCompressedOutPoint(tx.vin[index].prevout.hash, tx.vin[index].prevout.n), prevouts[index].scriptPubKey));
+            }
+            BOOST_CHECK(tx == CTransaction(CMutableTransaction(CCompressedTransaction(tx, 0, cinputs), outpoints, prevouts)));
+        }
+
         PrecomputedTransactionData txdata;
         txdata.Init(tx, std::vector<CTxOut>(prevouts));
         CachingTransactionSignatureChecker txcheck(&tx, idx, prevouts[idx].nValue, true, txdata);
